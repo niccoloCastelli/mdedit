@@ -595,6 +595,7 @@ impl App {
             Message::OutlineJump(byte) => {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.set_selection(Selection::cursor(byte));
+                    tab.editor.scroll_to_byte = Some(byte);
                 }
             }
             Message::SearchQuery(q) => {
@@ -604,6 +605,7 @@ impl App {
             Message::SearchJump(start, end) => {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.set_selection(Selection { anchor: start, head: end });
+                    tab.editor.scroll_to_byte = Some(start);
                 }
             }
             Message::Palette(msg) => return self.on_palette(msg),
@@ -1246,7 +1248,11 @@ impl App {
                 }
             }
             Action::Select(sel) => tab.set_selection(sel),
-            Action::Scroll(y) => tab.editor.scroll_y = y,
+            Action::Scroll(y) => {
+                tab.editor.scroll_y = y;
+                // The jump happened; clear it so the same byte can be asked for again.
+                tab.editor.scroll_to_byte = None;
+            }
             // Split scroll sync (ARCHITECTURE 4.3); wired by the app shell.
             Action::TopAnchor { .. } => {}
             Action::Copy(text) => return iced::clipboard::write(text),
