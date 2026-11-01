@@ -211,7 +211,7 @@ mod tests {
             assert!(w[1].top > w[0].top);
         }
         // Moving down keeps the column roughly.
-        let (x, row) = caret(&p, 3, 20.0);
+        let (x, _) = caret(&p, 3, 20.0);
         assert_eq!(row_of(&rows, 3), 0);
         let below = index_at_x(&p, &rows, 1, x, text.len());
         assert_eq!(row_of(&rows, below), 1);

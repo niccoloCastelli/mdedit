@@ -56,14 +56,12 @@ impl LineCache {
         self.map.retain(|_, (_, t)| *t > threshold);
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
-    pub fn clear(&mut self) {
-        self.map.clear();
-    }
-
+    #[cfg(test)]
     pub fn stats(&self) -> (u64, u64) {
         (self.hits, self.misses)
     }

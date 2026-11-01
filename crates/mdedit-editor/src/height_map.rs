@@ -313,9 +313,9 @@ mod tests {
 
     #[test]
     fn random_splices_match_model() {
-        // Small deterministic LCG; no extra dev-dependency needed.
+        // Small deterministic xorshift; no extra dev-dependency needed.
         let mut seed = 0x2545F4914F6CDD1Du64;
-        let mut rand = |n: usize| {
+        let mut rand = move |n: usize| {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
@@ -325,8 +325,12 @@ mod tests {
         let mut map = HeightMap::new(model.iter().copied());
         for _ in 0..2000 {
             let start = rand(model.len() + 1);
-            let end = (start + rand(if rand(10) == 0 { 2500 } else { 4 })).min(model.len());
-            let new: Vec<f32> = (0..rand(if rand(10) == 0 { 1500 } else { 4 })).map(|_| rand(30) as f32).collect();
+            let big_remove = rand(10) == 0;
+            let remove = rand(if big_remove { 2500 } else { 4 });
+            let end = (start + remove).min(model.len());
+            let big_insert = rand(10) == 0;
+            let count = rand(if big_insert { 1500 } else { 4 });
+            let new: Vec<f32> = (0..count).map(|_| rand(30) as f32).collect();
             model.splice(start..end, new.iter().copied());
             map.splice(start..end, new);
             if !model.is_empty() {

@@ -231,14 +231,14 @@ mod tests {
         let tokens = vec![
             StyledRange { range: 0..11, token: SyntaxToken::Heading(1) },
             StyledRange { range: 0..1, token: SyntaxToken::Marker },
-            StyledRange { range: 8..9, token: SyntaxToken::Code },
+            StyledRange { range: 9..10, token: SyntaxToken::Code },
         ];
         let (spans, code) = spans(line, &tokens, LineKind::Prose, &look);
         let texts: Vec<&str> = spans.iter().map(|s| s.text.as_ref()).collect();
         assert_eq!(texts, ["#", " Title `", "x", "`"]);
         assert_eq!(spans[0].color, Some(look.colors.marker));
         assert_eq!(spans[1].font.unwrap().weight, Weight::Bold);
-        assert_eq!(code, vec![8..9]);
+        assert_eq!(code, vec![9..10]);
     }
 
     #[test]

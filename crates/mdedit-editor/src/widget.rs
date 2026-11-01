@@ -16,7 +16,7 @@ use iced::advanced::widget::{self, Tree, operation, tree};
 use iced::advanced::{Clipboard, Renderer as _, Shell, Widget, mouse, renderer};
 use iced::keyboard::{self, key};
 use iced::{Border, Element, Event, Length, Pixels, Point, Rectangle, Size, alignment, window};
-use mdedit_core::highlight::{LineState, highlight_line};
+use mdedit_core::highlight::{LineState, StyledRange, highlight_line, highlight_lines};
 use mdedit_core::io::LineEnding;
 use mdedit_core::parse::BlockKind;
 use mdedit_core::{AppliedEdit, Document, Edit, EditOrigin, Selection, TextBuffer, TxnId};
@@ -83,7 +83,6 @@ impl Focus {
 /// Where things go inside the widget bounds (relative coordinates).
 #[derive(Debug, Clone, Copy, Default)]
 struct Geom {
-    width: f32,
     height: f32,
     text_x: f32,
     text_w: f32,
@@ -113,7 +112,6 @@ impl Geom {
             text_w = text_w.min((size.width - left_min - pad).max(48.0));
         }
         Self {
-            width: size.width,
             height: size.height,
             text_x,
             text_w,
@@ -267,37 +265,51 @@ fn line_lengths(buf: &dyn TextBuffer, lines: usize) -> Vec<usize> {
     lens
 }
 
-/// Syntax state at the start of `line` and whether it is code, from the
-/// block index (none in large-file mode).
-fn line_context(doc: &Document, line: usize) -> (LineState, LineKind) {
-    let plain = (LineState::default(), LineKind::Prose);
-    let Some(blocks) = doc.blocks() else { return plain };
-    let buf = doc.buffer();
-    let start = buf.line_to_byte(line);
-    let Some(i) = blocks.block_at(start) else { return plain };
-    let Some(block) = blocks.blocks().get(i) else { return plain };
+/// Whether `line` is code (fenced or indented code block), from the block
+/// index (none in large-file mode).
+fn line_kind(doc: &Document, line: usize) -> LineKind {
+    let Some(blocks) = doc.blocks() else { return LineKind::Prose };
+    let start = doc.buffer().line_to_byte(line);
+    let Some(block) = blocks.block_at(start).and_then(|i| blocks.get(i)) else { return LineKind::Prose };
     if start > block.bytes.end {
-        return plain;
+        return LineKind::Prose;
     }
-    match &block.kind {
-        BlockKind::CodeBlock { fenced, .. } => {
-            let mut state = LineState::default();
-            if *fenced && start > block.bytes.start {
-                let first = buf.line(buf.byte_to_line(block.bytes.start));
-                let fence: String =
-                    first.trim_start().chars().take_while(|&c| c == '`' || c == '~').collect();
-                state.in_fence = Some(fence);
-            }
-            (state, LineKind::Code)
-        }
-        BlockKind::Math | BlockKind::Mermaid => (LineState::default(), LineKind::Code),
-        _ => plain,
+    match block.kind {
+        BlockKind::CodeBlock { .. } | BlockKind::Math | BlockKind::Mermaid => LineKind::Code,
+        _ => LineKind::Prose,
     }
 }
 
-fn shape_text(text: &str, line_state: &mut LineState, kind: LineKind, look: &Look, width: f32) -> ShapedLine {
-    let tokens = highlight_line(text, line_state);
-    let (spans, code_ranges) = style::spans(text, &tokens, kind, look);
+/// Syntax tokens for a run of lines, computed once per layout pass.
+#[derive(Debug, Default)]
+struct Tokens {
+    start: usize,
+    lines: Vec<Vec<StyledRange>>,
+}
+
+impl Tokens {
+    fn compute(doc: &Document, lines: std::ops::Range<usize>) -> Self {
+        let buf = doc.buffer();
+        let lines = lines.start..lines.end.min(motion::line_count(buf));
+        let tokens = match doc.blocks() {
+            Some(index) => highlight_lines(index, buf, lines.clone()),
+            None => {
+                // Large-file mode: line-local tokenizer, state carried from
+                // the first line of the window.
+                let mut state = LineState::default();
+                lines.clone().map(|l| highlight_line(&buf.line(l), &mut state)).collect()
+            }
+        };
+        Self { start: lines.start, lines: tokens }
+    }
+
+    fn get(&self, line: usize) -> Option<&[StyledRange]> {
+        self.lines.get(line.checked_sub(self.start)?).map(Vec::as_slice)
+    }
+}
+
+fn shape_text(text: &str, tokens: &[StyledRange], kind: LineKind, look: &Look, width: f32) -> ShapedLine {
+    let (spans, code_ranges) = style::spans(text, tokens, kind, look);
     let metrics = look.metrics(kind);
     let paragraph = Paragraph::with_spans(Text {
         content: spans.as_slice(),
@@ -314,17 +326,35 @@ fn shape_text(text: &str, line_state: &mut LineState, kind: LineKind, look: &Loo
     ShapedLine { paragraph, height, kind, code_ranges }
 }
 
-/// The shaped paragraph of `line`, from the cache when possible.
-fn shape(cache: &mut LineCache, doc: &Document, look: &Look, width: f32, line: usize) -> Rc<ShapedLine> {
+/// The shaped paragraph of `line`, from the cache when possible. Tokens
+/// come from `window` when it covers the line.
+fn shape(
+    cache: &mut LineCache,
+    doc: &Document,
+    look: &Look,
+    width: f32,
+    line: usize,
+    window: Option<&Tokens>,
+) -> Rc<ShapedLine> {
     let text = doc.buffer().line(line);
-    let (mut line_state, kind) = line_context(doc, line);
+    let single;
+    let tokens = match window.and_then(|w| w.get(line)) {
+        Some(t) => t,
+        None => {
+            single = Tokens::compute(doc, line..line + 1);
+            single.get(line).unwrap_or(&[])
+        }
+    };
+    let kind = line_kind(doc, line);
     let mut h = DefaultHasher::new();
     text.hash(&mut h);
+    for t in tokens {
+        (t.range.start, t.range.end, t.token).hash(&mut h);
+    }
     kind.hash(&mut h);
-    line_state.in_fence.hash(&mut h);
     width.to_bits().hash(&mut h);
     look.generation.hash(&mut h);
-    cache.get_or_shape(h.finish(), || shape_text(&text, &mut line_state, kind, look, width))
+    cache.get_or_shape(h.finish(), || shape_text(&text, tokens, kind, look, width))
 }
 
 impl State {
@@ -364,7 +394,7 @@ impl State {
             return;
         }
         if same_doc && buf.version() > self.version && self.version != u64::MAX {
-            let edits: Vec<&AppliedEdit> = doc.log().since(self.version).collect();
+            let edits: Vec<&AppliedEdit> = doc.log().since(self.version).map(Iterator::collect).unwrap_or_default();
             let contiguous = edits.first().is_some_and(|e| e.version == self.version + 1)
                 && edits.last().is_some_and(|e| e.version == buf.version());
             if contiguous && edits.len() <= MAX_INCREMENTAL_EDITS {
@@ -442,7 +472,7 @@ impl State {
     fn follow(&mut self, doc: &Document, look: &Look, head: usize) {
         let buf = doc.buffer();
         let (line, col) = motion::line_col(buf, head);
-        let shaped = shape(&mut self.cache, doc, look, self.geom.text_w, line);
+        let shaped = shape(&mut self.cache, doc, look, self.geom.text_w, line, None);
         self.heights.set_measured(line, shaped.height);
         let (_, row) = geometry::caret(&shaped.paragraph, col, look.metrics(shaped.kind).line_height);
         let top = PAD_TOP as f64 + self.heights.offset_of(line) + row.top as f64;
@@ -467,6 +497,12 @@ impl State {
         let view = self.geom.height;
         let over = view.max(200.0);
         let width = self.geom.text_w;
+        // Tokens for the lines the estimate says will be laid out (a few
+        // extra in case measured heights come out smaller).
+        let scroll = self.scroll().clamp(0.0, self.max_scroll()) - PAD_TOP as f64;
+        let first = self.heights.line_at(scroll - over as f64).0.min(self.anchor_line);
+        let last = self.heights.line_at(scroll + (view + over) as f64).0.max(self.anchor_line);
+        let tokens = Tokens::compute(doc, first.saturating_sub(8)..last + 16);
         for _ in 0..2 {
             let scroll = self.scroll();
             let clamped = scroll.clamp(0.0, self.max_scroll());
@@ -480,7 +516,7 @@ impl State {
             let mut y = anchor_y;
             let mut line = self.anchor_line;
             while line < n && y < view + over {
-                let shaped = shape(&mut self.cache, doc, look, width, line);
+                let shaped = shape(&mut self.cache, doc, look, width, line, Some(&tokens));
                 self.heights.set_measured(line, shaped.height);
                 let start = buf.line_to_byte(line);
                 let len = buf.line(line).len();
@@ -495,7 +531,7 @@ impl State {
             let mut line = self.anchor_line;
             while line > 0 && y > -over {
                 line -= 1;
-                let shaped = shape(&mut self.cache, doc, look, width, line);
+                let shaped = shape(&mut self.cache, doc, look, width, line, Some(&tokens));
                 self.heights.set_measured(line, shaped.height);
                 y -= shaped.height;
                 let start = buf.line_to_byte(line);
@@ -592,7 +628,7 @@ impl<Message> Editor<'_, Message> {
     }
 
     fn shape(&self, st: &mut State, line: usize) -> Rc<ShapedLine> {
-        shape(&mut st.cache, self.doc, &self.look, st.geom.text_w, line)
+        shape(&mut st.cache, self.doc, &self.look, st.geom.text_w, line, None)
     }
 
     /// Move `rows` visual rows up (negative) or down from `head`, keeping
@@ -1228,5 +1264,126 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
 impl<'a, Message: 'a> From<Editor<'a, Message>> for Element<'a, Message> {
     fn from(editor: Editor<'a, Message>) -> Self {
         Element::new(editor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mdedit_core::RopeBuffer;
+
+    fn doc_of(lines: usize, parse: bool) -> Document {
+        let mut text = String::new();
+        for i in 0..lines {
+            if i % 10 == 0 {
+                text.push_str(&format!("## Heading {i}\n"));
+            } else {
+                text.push_str("Some *prose* with `code` and a [link](https://example.com) that is long enough to wrap \
+                               around once or twice in a 720 px column of body text.\n");
+            }
+        }
+        Document::with_buffer(Box::new(RopeBuffer::from_text(&text)), parse)
+    }
+
+    fn laid_out(doc: &Document, state: &EditorState) -> State {
+        let look = Look::new(&Theme::ember_light(), state.monospace);
+        let mut st = State::default();
+        st.geom = Geom::compute(Size::new(1000.0, 800.0), state, &look, motion::line_count(doc.buffer()));
+        st.sync(doc, &look);
+        st.prepare(doc, &look);
+        st
+    }
+
+    #[test]
+    fn lays_out_only_the_viewport() {
+        let doc = doc_of(20_000, false);
+        let st = laid_out(&doc, &EditorState::default());
+        assert_eq!(st.heights.len(), 20_001);
+        // Viewport plus one screen of overscan below (nothing above line 0).
+        assert!(st.visible.len() > 10 && st.visible.len() < 200, "{}", st.visible.len());
+        assert_eq!(st.visible[0].line, 0);
+        assert!(st.visible.windows(2).all(|w| (w[1].y - (w[0].y + w[0].shaped.height)).abs() < 0.01));
+    }
+
+    #[test]
+    fn scroll_anchor_survives_measurement() {
+        let doc = doc_of(5_000, false);
+        let look = Look::new(&Theme::ember_light(), false);
+        let mut st = laid_out(&doc, &EditorState::default());
+        st.set_scroll(100_000.0);
+        st.prepare(&doc, &look);
+        let line = st.anchor_line;
+        let top = st.visible.iter().find(|v| v.line == line).map(|v| v.y).unwrap();
+        // Measure a block of lines far above: the offset of the anchor
+        // changes, what is on screen does not.
+        for l in 0..200 {
+            st.heights.set_measured(l, 100.0);
+        }
+        st.prepare(&doc, &look);
+        assert_eq!(st.anchor_line, line);
+        let top2 = st.visible.iter().find(|v| v.line == line).map(|v| v.y).unwrap();
+        assert_eq!(top, top2);
+    }
+
+    #[test]
+    fn edits_patch_the_height_map() {
+        let mut doc = doc_of(3_000, true);
+        let look = Look::new(&Theme::ember_light(), false);
+        let mut st = laid_out(&doc, &EditorState::default());
+        let at = doc.buffer().line_to_byte(1500);
+        doc.apply(&Edit::insert(at, "a\nb\nc\n", EditOrigin::User, TxnId(0)));
+        doc.apply(&Edit::delete(0..doc.buffer().line_to_byte(2), EditOrigin::User, TxnId(0)));
+        doc.apply(&Edit::insert(5, "x\r\ny", EditOrigin::User, TxnId(0)));
+        st.sync(&doc, &look);
+        assert_eq!(st.heights.len(), doc.buffer().len_lines().unwrap());
+        assert_eq!(st.version, doc.buffer().version());
+    }
+
+    /// Per-keystroke widget work on a ~10 MB document: apply the edit, sync
+    /// the height map, follow the caret and lay out the viewport. Run with
+    /// `cargo test --release -p mdedit-editor -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_typing_10mb() {
+        for parse in [false, true] {
+            let mut doc = doc_of(65_000, parse);
+            let look = Look::new(&Theme::ember_light(), false);
+            let state = EditorState::default();
+            let mut st = laid_out(&doc, &state);
+            let mut pos = doc.buffer().line_to_byte(30_000) + 10;
+            st.follow(&doc, &look, pos);
+            st.prepare(&doc, &look);
+            let mut samples = Vec::new();
+            let mut applies = Vec::new();
+            for i in 0..400 {
+                let text = if i % 40 == 39 { "\n" } else { "x" };
+                let applying = Instant::now();
+                doc.apply(&Edit::insert(pos, text, EditOrigin::User, TxnId(0)));
+                applies.push(applying.elapsed());
+                pos += text.len();
+                let started = Instant::now();
+                st.sync(&doc, &look);
+                st.follow(&doc, &look, pos);
+                st.prepare(&doc, &look);
+                samples.push(started.elapsed());
+                if started.elapsed() > Duration::from_millis(2) {
+                    eprintln!("slow keystroke {i}: {:?}", started.elapsed());
+                }
+            }
+            let s = stats::Summary::of(&samples).unwrap();
+            eprintln!("typing, widget work, {} bytes, parse={parse}: {s}", doc.buffer().len_bytes());
+            eprintln!("typing, Document::apply, parse={parse}: {}", stats::Summary::of(&applies).unwrap());
+            let mut frames = Vec::new();
+            for _ in 0..400 {
+                let started = Instant::now();
+                st.scroll_by(120.0);
+                st.prepare(&doc, &look);
+                frames.push(started.elapsed());
+                if started.elapsed() > Duration::from_millis(2) {
+                    eprintln!("slow frame {}: {:?}", frames.len(), started.elapsed());
+                }
+            }
+            eprintln!("scroll frame layout, parse={parse}: {}", stats::Summary::of(&frames).unwrap());
+        }
     }
 }
