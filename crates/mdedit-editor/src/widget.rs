@@ -181,6 +181,8 @@ struct State {
     shift: bool,
     /// The last `SelectionRect` published.
     sel_rect: Option<Rectangle>,
+    /// The last `CaretRect` published.
+    caret_pub: Option<Rectangle>,
     // Measurements.
     keystroke_started: Cell<Option<(Instant, u64)>>,
     layout_time: Cell<Duration>,
@@ -214,6 +216,7 @@ impl Default for State {
             queued: VecDeque::new(),
             shift: false,
             sel_rect: None,
+            caret_pub: None,
             keystroke_started: Cell::new(None),
             layout_time: Cell::new(Duration::ZERO),
         }
@@ -1168,6 +1171,19 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
                 if rect != st.sel_rect {
                     st.sel_rect = rect;
                     shell.publish((self.on_action)(Action::SelectionRect(rect)));
+                }
+                if self.state.report_caret {
+                    let caret = st
+                        .focus
+                        .as_ref()
+                        .and(st.caret_rect(self.doc.buffer(), &self.look, self.selection(st).head))
+                        .map(|r| r + iced::Vector::new(bounds.x, bounds.y));
+                    if caret != st.caret_pub {
+                        st.caret_pub = caret;
+                        shell.publish((self.on_action)(Action::CaretRect(caret)));
+                    }
+                } else {
+                    st.caret_pub = None;
                 }
             }
             _ => {}

@@ -10,6 +10,7 @@ mod palette;
 mod separator;
 mod session;
 mod settings;
+mod slash;
 mod style;
 mod tab;
 mod trace;
