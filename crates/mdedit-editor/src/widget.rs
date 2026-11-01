@@ -161,6 +161,8 @@ struct State {
     /// The last scroll value we published, which the app may echo back.
     echo: Option<f32>,
     report_scroll: bool,
+    /// `EditorState::scroll_to_byte` as last seen.
+    scroll_to_byte: Option<usize>,
     geom: Geom,
     visible: Vec<VisibleLine>,
     last_head: Option<usize>,
@@ -195,6 +197,7 @@ impl Default for State {
             external_scroll: 0.0,
             echo: None,
             report_scroll: false,
+            scroll_to_byte: None,
             geom: Geom::default(),
             visible: Vec::new(),
             last_head: None,
@@ -463,6 +466,32 @@ impl State {
         self.set_scroll(scroll_y as f64);
     }
 
+    /// Source position at the top of the viewport: the start byte of the
+    /// top line and how far into its height the viewport top is.
+    fn top_anchor(&self, buf: &dyn TextBuffer) -> (usize, f32) {
+        let y = self.scroll() - PAD_TOP as f64;
+        if y <= 0.0 || self.heights.is_empty() {
+            return (0, 0.0);
+        }
+        let (line, top) = self.heights.line_at(y);
+        let h = self.heights.height(line).max(1.0) as f64;
+        let line = line.min(motion::line_count(buf) - 1);
+        (buf.line_to_byte(line), ((y - top) / h).clamp(0.0, 1.0) as f32)
+    }
+
+    /// Put the line holding `byte` at the top of the viewport, when the app
+    /// sets a new `scroll_to_byte`.
+    fn accept_scroll_to_byte(&mut self, buf: &dyn TextBuffer, target: Option<usize>) {
+        if target == self.scroll_to_byte {
+            return;
+        }
+        self.scroll_to_byte = target;
+        if let Some(byte) = target {
+            let line = buf.byte_to_line(byte.min(buf.len_bytes())).min(self.heights.len().saturating_sub(1));
+            self.set_scroll(PAD_TOP as f64 + self.heights.offset_of(line));
+        }
+    }
+
     /// Scroll so the caret at `head` is on screen.
     fn follow(&mut self, doc: &Document, look: &Look, head: usize) {
         let buf = doc.buffer();
@@ -601,7 +630,12 @@ impl<Message> Editor<'_, Message> {
                 Action::Scroll(y) => st.echo = Some(*y),
                 _ => {}
             }
+            let scrolled = matches!(action, Action::Scroll(_));
             shell.publish((self.on_action)(action));
+            if scrolled {
+                let (byte, fraction) = st.top_anchor(self.doc.buffer());
+                shell.publish((self.on_action)(Action::TopAnchor { byte, fraction }));
+            }
         }
     }
 
@@ -1021,6 +1055,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
         st.geom = Geom::compute(size, self.state, &self.look, lines);
         st.sync(self.doc, &self.look);
         st.accept_external_scroll(self.state.scroll_y);
+        st.accept_scroll_to_byte(self.doc.buffer(), self.state.scroll_to_byte);
         let head = self.state.selection.head.min(self.doc.buffer().len_bytes());
         if st.last_head.is_some_and(|h| h != head) {
             st.follow(self.doc, &self.look, head);
@@ -1324,6 +1359,29 @@ mod tests {
         assert_eq!(st.anchor_line, line);
         let top2 = st.visible.iter().find(|v| v.line == line).map(|v| v.y).unwrap();
         assert_eq!(top, top2);
+    }
+
+    #[test]
+    fn top_anchor_round_trips_through_scroll_to_byte() {
+        let doc = doc_of(5_000, false);
+        let look = Look::new(&Theme::ember_light(), false);
+        let buf = doc.buffer();
+        let mut st = laid_out(&doc, &EditorState::default());
+        assert_eq!(st.top_anchor(buf), (0, 0.0));
+        let target = buf.line_to_byte(1234);
+        st.accept_scroll_to_byte(buf, Some(target));
+        st.prepare(&doc, &look);
+        assert_eq!(st.top_anchor(buf), (target, 0.0));
+        // Half a line further down: same line, fraction about one half.
+        let h = st.heights.height(1234) as f64;
+        st.scroll_by(h / 2.0);
+        let (byte, fraction) = st.top_anchor(buf);
+        assert_eq!(byte, target);
+        assert!((fraction - 0.5).abs() < 0.01, "{fraction}");
+        // The same value again does not jump back.
+        st.accept_scroll_to_byte(buf, Some(target));
+        assert_eq!(st.top_anchor(buf).0, target);
+        assert!(st.top_anchor(buf).1 > 0.4);
     }
 
     #[test]

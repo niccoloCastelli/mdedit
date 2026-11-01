@@ -6,8 +6,9 @@
 //! endings as they are, so an unedited document saves byte-identically;
 //! [`FileFormat::line_ending`] is what new lines should use.
 //!
-//! Files above the large-file threshold will open as a `MappedBuffer` once
-//! the large-files workstream lands it; until then they load into a rope.
+//! Files above the large-file threshold open as a [`MappedBuffer`] (SPEC 8):
+//! no parse, the line index builds in the background, and saving streams
+//! the pieces and then remaps the new file.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -15,8 +16,9 @@ use std::path::{Path, PathBuf};
 
 use crate::buffer::TextBuffer;
 use crate::document::Document;
+use crate::mapped::MappedBuffer;
 
-const BOM: &[u8] = b"\xEF\xBB\xBF";
+pub(crate) const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineEnding {
@@ -81,11 +83,27 @@ pub fn decode(bytes: Vec<u8>) -> (FileFormat, String) {
 
 /// Open a file as a document.
 pub fn load(path: &Path, large_file_threshold: u64) -> Result<Document, IoError> {
-    // Large files will get a MappedBuffer here (large-files workstream).
-    let _ = large_file_threshold;
-    let (format, text) = decode(fs::read(path)?);
-    let mut doc = Document::from_text(&text);
-    doc.format = format;
+    load_inner(path, large_file_threshold, false)
+}
+
+/// [`load`] with the initial parse left as a job for a worker
+/// (`Document::take_parse_job`), so the first frame comes sooner.
+pub fn load_deferred(path: &Path, large_file_threshold: u64) -> Result<Document, IoError> {
+    load_inner(path, large_file_threshold, true)
+}
+
+fn load_inner(path: &Path, large_file_threshold: u64, defer_parse: bool) -> Result<Document, IoError> {
+    let mut doc = if fs::metadata(path)?.len() > large_file_threshold {
+        let (buf, format) = MappedBuffer::open(path)?;
+        let mut doc = Document::with_buffer(Box::new(buf), false);
+        doc.format = format;
+        doc
+    } else {
+        let (format, text) = decode(fs::read(path)?);
+        let mut doc = if defer_parse { Document::from_text_deferred(&text) } else { Document::from_text(&text) };
+        doc.format = format;
+        doc
+    };
     doc.path = Some(path.to_path_buf());
     Ok(doc)
 }
@@ -99,7 +117,12 @@ pub fn save(doc: &mut Document, path: Option<&Path>) -> Result<(), IoError> {
         return Err(IoError::ReadOnly);
     }
     let target = path.map(Path::to_path_buf).or_else(|| doc.path.clone()).ok_or(IoError::NoPath)?;
-    write_atomic(&target, doc.buffer(), doc.format)?;
+    if let Some(mapped) = doc.mapped() {
+        let saved = mapped.save_to(&target, doc.format)?;
+        doc.remap(saved)?;
+    } else {
+        write_atomic(&target, doc.buffer(), doc.format)?;
+    }
     doc.path = Some(target);
     doc.mark_saved();
     Ok(())
@@ -110,6 +133,16 @@ pub fn save(doc: &mut Document, path: Option<&Path>) -> Result<(), IoError> {
 /// target, fsync the directory. A symlinked target is followed, so the link
 /// stays a link. The target's permissions are kept.
 pub fn write_atomic(path: &Path, buf: &dyn TextBuffer, format: FileFormat) -> Result<(), IoError> {
+    write_chunks_atomic(path, buf.chunks(0..buf.len_bytes()), format).map(drop)
+}
+
+/// [`write_atomic`] for any stream of text chunks. Returns the path actually
+/// written (the symlink target, if `path` is a link).
+pub fn write_chunks_atomic<'a>(
+    path: &Path,
+    chunks: impl Iterator<Item = &'a [u8]>,
+    format: FileFormat,
+) -> Result<PathBuf, IoError> {
     let target = match fs::canonicalize(path) {
         Ok(real) => real,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
@@ -131,7 +164,7 @@ pub fn write_atomic(path: &Path, buf: &dyn TextBuffer, format: FileFormat) -> Re
         if format.bom {
             out.write_all(BOM)?;
         }
-        for chunk in buf.chunks(0..buf.len_bytes()) {
+        for chunk in chunks {
             out.write_all(chunk)?;
         }
         let file = out.into_inner().map_err(|e| e.into_error())?;
@@ -144,7 +177,8 @@ pub fn write_atomic(path: &Path, buf: &dyn TextBuffer, format: FileFormat) -> Re
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
-    Ok(result?)
+    result?;
+    Ok(target)
 }
 
 /// Make the rename durable. Best effort: not every platform or file system
@@ -239,6 +273,26 @@ mod tests {
         save(&mut doc, Some(&path)).unwrap();
         assert_eq!(doc.path.as_deref(), Some(path.as_path()));
         assert_eq!(fs::read(&path).unwrap(), b"x");
+    }
+
+    #[test]
+    fn large_files_open_mapped_and_save_by_streaming() {
+        let dir = tmpdir();
+        let path = dir.path().join("big.md");
+        let body = "# Big\r\n\r\nline\r\n".repeat(100);
+        fs::write(&path, format!("\u{feff}{body}")).unwrap();
+        let mut doc = load(&path, 64).unwrap();
+        assert!(doc.is_large());
+        assert!(doc.mapped().is_some());
+        assert_eq!(doc.format, FileFormat { bom: true, line_ending: LineEnding::CrLf, read_only: false });
+        assert_eq!(doc.buffer().text(), body);
+        doc.apply(&Edit::insert(0, "x", EditOrigin::User, TxnId(0)));
+        save(&mut doc, None).unwrap();
+        assert!(!doc.is_dirty());
+        assert_eq!(fs::read(&path).unwrap(), format!("\u{feff}x{body}").into_bytes());
+        assert_eq!(doc.mapped().unwrap().piece_count(), 1);
+        assert_eq!(doc.mapped().unwrap().disk_change(), crate::DiskChange::Unchanged);
+        assert!(!load(&path, DEFAULT_LARGE_FILE_THRESHOLD).unwrap().is_large());
     }
 
     #[cfg(unix)]

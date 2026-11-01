@@ -7,7 +7,8 @@ use std::time::Instant;
 use crate::buffer::{RopeBuffer, TextBuffer};
 use crate::edit::{AppliedEdit, Edit, EditOrigin, TxnId};
 use crate::edit_log::EditLog;
-use crate::io::FileFormat;
+use crate::io::{FileFormat, IoError};
+use crate::mapped::{MappedBuffer, Remap};
 use crate::parse::{BlockIndex, ParseJob, ParseResult};
 use crate::selection::Selection;
 use crate::undo::UndoStack;
@@ -36,6 +37,14 @@ impl Document {
         Self::with_buffer(Box::new(RopeBuffer::from_text(text)), true)
     }
 
+    /// Like [`Self::from_text`], but the initial parse becomes a background
+    /// job (see [`Self::take_parse_job`]) so opening stays fast.
+    pub fn from_text_deferred(text: &str) -> Self {
+        let mut doc = Self::with_buffer(Box::new(RopeBuffer::from_text(text)), false);
+        doc.blocks = Some(BlockIndex::deferred(doc.buffer.as_ref()));
+        doc
+    }
+
     /// Wrap any buffer. `parse = false` for large-file mode.
     pub fn with_buffer(buffer: Box<dyn TextBuffer>, parse: bool) -> Self {
         let blocks = parse.then(|| BlockIndex::parse(buffer.as_ref()));
@@ -54,6 +63,21 @@ impl Document {
 
     pub fn buffer(&self) -> &dyn TextBuffer {
         self.buffer.as_ref()
+    }
+
+    /// The large-file buffer, if this document has one (SPEC 8).
+    pub fn mapped(&self) -> Option<&MappedBuffer> {
+        self.buffer.as_mapped()
+    }
+
+    /// Switch a large-file document to the file just written by
+    /// [`MappedBuffer::save_to`]; see [`MappedBuffer::remap`]. The text does
+    /// not change, so nothing is logged.
+    pub fn remap(&mut self, saved: Remap) -> Result<bool, IoError> {
+        match self.buffer.as_mapped_mut() {
+            Some(m) => m.remap(saved),
+            None => Ok(false),
+        }
     }
 
     pub fn blocks(&self) -> Option<&BlockIndex> {

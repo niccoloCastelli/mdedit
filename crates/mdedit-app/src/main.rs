@@ -8,12 +8,14 @@ mod session;
 mod settings;
 mod style;
 mod tab;
+mod trace;
 mod view;
 mod watch;
 
 use app::App;
 
 fn main() -> iced::Result {
+    trace::start();
     let ui_font = style::font(&mdedit_theme::Fonts::default().ui);
     let app = iced::application(App::new, App::update, App::view)
         .title(App::title)

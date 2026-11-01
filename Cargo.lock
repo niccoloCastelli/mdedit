@@ -4342,11 +4342,16 @@ name = "mdedit-core"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "memchr",
+ "memmap2",
  "proptest",
  "pulldown-cmark",
+ "regex-automata",
  "ropey",
  "tempfile",
  "thiserror 2.0.21",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

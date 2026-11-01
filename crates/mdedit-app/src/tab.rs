@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use mdedit_core::document::SavePoint;
 use mdedit_core::io::{self, FileFormat};
+use mdedit_core::mapped::Remap;
 use mdedit_core::{Document, Edit, EditOrigin, Selection, TextBuffer};
 use mdedit_editor::EditorState;
 use mdedit_view::ViewState;
@@ -49,6 +50,12 @@ pub struct Tab {
     pub untitled: usize,
     /// A background save is running (DESIGN_SYSTEM 8.6: never block typing).
     pub saving: bool,
+    /// Smart input replaced a typed edit: drop the widget's caret update
+    /// that follows it (its position is for the plain edit).
+    pub skip_select: bool,
+    /// The table the cursor is in, to auto-align it when the cursor leaves
+    /// (DESIGN_SYSTEM 8.4).
+    pub table: Option<std::ops::Range<usize>>,
 }
 
 impl Tab {
@@ -66,6 +73,8 @@ impl Tab {
             external: None,
             untitled,
             saving: false,
+            skip_select: false,
+            table: None,
         }
     }
 
@@ -76,6 +85,11 @@ impl Tab {
             }
             None => format!("Untitled-{}", self.untitled),
         }
+    }
+
+    /// Not valid UTF-8 (for large files, known once indexing has scanned it).
+    pub fn read_only(&self) -> bool {
+        self.doc.format.read_only || self.doc.mapped().and_then(|m| m.utf8_valid()) == Some(false)
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -106,6 +120,17 @@ impl Tab {
         self.view.selection = sel;
     }
 
+    /// Apply a command's edits as one undo step and take its selection.
+    pub fn apply_command(&mut self, result: mdedit_core::command::CommandResult) {
+        if !result.edits.is_empty() {
+            let txn = self.doc.next_txn();
+            for edit in result.edits {
+                self.apply(&Edit { txn, origin: EditOrigin::Command, ..edit });
+            }
+        }
+        self.set_selection(result.selection);
+    }
+
     /// Apply an edit and move every cursor through it.
     pub fn apply(&mut self, edit: &Edit) {
         let applied = self.doc.apply(edit);
@@ -120,14 +145,14 @@ impl Tab {
         let job = self.begin_save(to)?;
         let path = job.path.clone();
         let point = job.point;
-        job.run()?;
-        self.finish_save(path, point);
+        let remap = job.run()?;
+        self.finish_save(path, point, remap);
         Ok(())
     }
 
     /// Snapshot the document for a background save.
     pub fn begin_save(&mut self, to: Option<&Path>) -> Result<SaveJob, String> {
-        if self.doc.format.read_only {
+        if self.read_only() {
             return Err(io::IoError::ReadOnly.to_string());
         }
         let path = to.map(Path::to_path_buf).or_else(|| self.doc.path.clone()).ok_or("no path to save to")?;
@@ -137,8 +162,12 @@ impl Tab {
     }
 
     /// The snapshot taken at `point` is on disk at `path`.
-    pub fn finish_save(&mut self, path: PathBuf, point: SavePoint) {
+    pub fn finish_save(&mut self, path: PathBuf, point: SavePoint, remap: Option<Remap>) {
         self.saving = false;
+        if let Some(remap) = remap {
+            // Point the map at the new file; a no-op if edits came in since.
+            let _ = self.doc.remap(remap);
+        }
         self.doc.mark_saved_at(point);
         self.disk = DiskStamp::read(&path);
         self.doc.path = Some(path);
@@ -189,8 +218,14 @@ pub struct SaveJob {
 }
 
 impl SaveJob {
-    pub fn run(&self) -> Result<(), String> {
-        io::write_atomic(&self.path, self.snapshot.as_ref(), self.format).map_err(|e| e.to_string())
+    /// Write the snapshot. A large (mapped) document streams its pieces and
+    /// returns the [`Remap`] to hand to `Document::remap`.
+    pub fn run(&self) -> Result<Option<Remap>, String> {
+        match self.snapshot.as_mapped() {
+            Some(m) => m.save_to(&self.path, self.format).map(Some),
+            None => io::write_atomic(&self.path, self.snapshot.as_ref(), self.format).map(|()| None),
+        }
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -222,9 +257,11 @@ impl<T> std::fmt::Debug for Handoff<T> {
 
 /// Load a file off the UI thread.
 pub async fn load(path: PathBuf, threshold: u64) -> Result<Handoff<Document>, String> {
-    tokio::task::spawn_blocking(move || io::load(&path, threshold).map(Handoff::new).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || {
+        io::load_deferred(&path, threshold).map(Handoff::new).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -291,5 +328,61 @@ mod tests {
         tab.view.selection = Selection::cursor(6);
         tab.set_mode(Mode::Split);
         assert_eq!(tab.editor.selection, Selection::cursor(6));
+    }
+}
+
+/// M1 numbers on a 10 MB document, without a window (open and edit apply;
+/// first frame and widget time are measured in the running app).
+/// `cargo test --release -p mdedit-app -- --ignored --nocapture m1_`
+#[cfg(test)]
+mod perf {
+    use std::time::Instant;
+
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn m1_open_and_type_10mb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.md");
+        let mut text = String::new();
+        let mut i = 0;
+        while text.len() < 10 * 1024 * 1024 {
+            text.push_str(&format!(
+                "## Section {i}\n\nSome *prose* with a [link](http://x.y) and `code`, line {i}.\n\n- item\n- item\n\n"
+            ));
+            i += 1;
+        }
+        std::fs::write(&path, &text).unwrap();
+
+        let t = Instant::now();
+        let mut doc = io::load_deferred(&path, u64::MAX).unwrap();
+        let open = t.elapsed();
+        let t = Instant::now();
+        while let Some(job) = doc.take_parse_job() {
+            doc.finish_parse(job.run());
+        }
+        let parse = t.elapsed();
+        let mut tab = Tab::new(1, doc, Mode::Edit, 0);
+
+        let mut times = Vec::new();
+        let at = tab.doc.buffer().len_bytes() / 2;
+        for k in 0..200 {
+            let t = Instant::now();
+            tab.apply(&Edit::insert(at + k, "x", EditOrigin::User, mdedit_core::TxnId(0)));
+            while let Some(job) = tab.doc.take_parse_job() {
+                tab.doc.finish_parse(job.run());
+            }
+            times.push(t.elapsed());
+        }
+        times.sort();
+        let p99 = times[times.len() * 99 / 100];
+        let t = Instant::now();
+        tab.save(Some(&dir.path().join("copy.md"))).unwrap();
+        let save = t.elapsed();
+        eprintln!(
+            "10 MB: load {open:?} (parse on worker {parse:?}), apply p50 {:?} p99 {p99:?}, save {save:?}",
+            times[times.len() / 2]
+        );
     }
 }

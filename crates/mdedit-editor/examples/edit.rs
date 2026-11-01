@@ -166,6 +166,7 @@ impl App {
                 }
                 Action::Select(sel) => self.state.selection = sel,
                 Action::Scroll(y) => self.state.scroll_y = y,
+                Action::TopAnchor { .. } => {}
                 Action::Copy(text) => return clipboard::write(text),
                 Action::Paste => return clipboard::read().map(Message::Pasted),
                 Action::Undo => {

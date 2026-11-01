@@ -41,6 +41,10 @@ pub fn markdown_options() -> Options {
 /// (ARCHITECTURE 3.2).
 pub const DEFAULT_OFFLOAD_THRESHOLD: usize = 64 * 1024;
 
+/// Documents up to this size re-collect link reference definitions when one
+/// disappears (see `BlockIndex::rescan_refs`).
+const MAX_REF_RESCAN: usize = 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlockKind {
     Paragraph,
@@ -122,6 +126,8 @@ pub struct BlockIndex {
     /// Sequence number of the job handed out for `pending`, if any.
     job_out: Option<u64>,
     job_seq: u64,
+    /// A label lost its definition; a duplicate may be hidden.
+    labels_lost: bool,
 }
 
 impl Default for BlockIndex {
@@ -136,6 +142,7 @@ impl Default for BlockIndex {
             pending: None,
             job_out: None,
             job_seq: 0,
+            labels_lost: false,
         }
     }
 }
@@ -174,20 +181,18 @@ impl BlockIndex {
     /// the edit.
     pub fn on_edit(&mut self, applied: &AppliedEdit, buf: &dyn TextBuffer) {
         let range = applied.edit.range.clone();
-        let new_range = range.start..range.start + applied.edit.text.len();
         if let Some(pending) = self.pending.clone() {
-            self.shift_only(applied);
+            let touched = self.shift_only(applied);
             let mapped = applied.map_offset(pending.start, false)..applied.map_offset(pending.end, true);
-            self.pending = Some(mapped.start.min(new_range.start)..mapped.end.max(new_range.end));
+            self.pending = Some(mapped.start.min(touched.start)..mapped.end.max(touched.end));
             return;
         }
         let delta = applied.edit.delta();
         let plan = self.plan(range.clone(), delta, buf);
         match run_plan(&plan, buf, self.offload_threshold) {
-            Some(result) => self.apply_result(result, delta, range),
+            Some(result) => self.apply_result(result, delta, range, buf),
             None => {
-                self.shift_only(applied);
-                self.pending = Some(new_range);
+                self.pending = Some(self.shift_only(applied));
             }
         }
     }
@@ -224,7 +229,7 @@ impl BlockIndex {
             return false;
         }
         self.pending = None;
-        self.apply_result(result.window, 0, result.pending);
+        self.apply_result(result.window, 0, result.pending, buf);
         true
     }
 
@@ -234,7 +239,7 @@ impl BlockIndex {
             self.job_out = None;
             let plan = self.plan(pending.clone(), 0, buf);
             if let Some(result) = run_plan(&plan, buf, None) {
-                self.apply_result(result, 0, pending);
+                self.apply_result(result, 0, pending, buf);
             }
         }
     }
@@ -304,34 +309,56 @@ impl BlockIndex {
             Some((r, _)) if r.start <= range.start => buf.line_to_byte(buf.byte_to_line(r.start)),
             _ => 0,
         };
-        // Parsing from a block start is a fresh start, except after a link
-        // reference definition on the line just before: the window line is
-        // then a paragraph continuation (the definition-only part of a
-        // paragraph produces no block). Take such definitions in, and the
-        // block whose range they fall in.
-        while start > 0 {
+        // Parsing from a block start is a fresh start, except when the line
+        // just before is not blank and belongs to a link reference
+        // definition (the definition-only part of a paragraph produces no
+        // block, so the window line is a paragraph continuation) or to a
+        // container block (list, quote, footnote) whose state can claim the
+        // line. Then the window takes that definition or block in too.
+        for _ in 0..64 {
+            if start == 0 {
+                break;
+            }
             let prev_line = buf.byte_to_line(start - 1);
             let prev_start = buf.line_to_byte(prev_line);
             if buf.line(prev_line).trim().is_empty() {
-                break;
+                // After blank lines, an indented line still continues a
+                // list item or footnote definition.
+                let indented = buf.line(buf.byte_to_line(start)).starts_with([' ', '\t']);
+                match first.checked_sub(1).and_then(|p| self.blocks.get(p)) {
+                    Some((r, data))
+                        if indented && matches!(data.kind, BlockKind::List { .. } | BlockKind::FootnoteDefinition) =>
+                    {
+                        first -= 1;
+                        start = buf.line_to_byte(buf.byte_to_line(r.start));
+                        continue;
+                    }
+                    _ => break,
+                }
             }
-            let covering = self
+            let mut new_start = self
                 .refs
-                .count_starting_before(prev_start, true)
+                .count_starting_before(start, false)
                 .checked_sub(1)
                 .and_then(|i| self.refs.get(i))
-                .filter(|(r, _)| r.end > prev_start);
-            let Some((def, _)) = covering else { break };
-            let mut new_start = def.start;
+                .filter(|(r, _)| r.end > prev_start)
+                .map(|(r, _)| r.start);
             if first > 0
-                && let Some((r, _)) = self.blocks.get(first - 1)
-                && r.end > new_start
+                && let Some((r, data)) = self.blocks.get(first - 1)
+                && let claims =
+                    matches!(data.kind, BlockKind::List { .. } | BlockKind::BlockQuote | BlockKind::FootnoteDefinition)
+                && r.end >= prev_start
+                && (claims || new_start.is_some_and(|d| r.end > d))
             {
                 first -= 1;
-                new_start = new_start.min(r.start);
+                new_start = Some(new_start.map_or(r.start, |d| d.min(r.start)));
             }
+            let Some(new_start) = new_start else { break };
             start = buf.line_to_byte(buf.byte_to_line(new_start));
         }
+        // Several blocks can start on one line (`[^1]:[^1]: x`): replace
+        // every block starting in the window.
+        first = first.min(self.blocks.count_starting_before(start, false));
         // Old blocks after the edit whose boundary may end the window: the
         // block after the last touched one, then doubling distances.
         let mut candidates = Vec::new();
@@ -354,7 +381,7 @@ impl BlockIndex {
     /// applied after the window (0 when it was already shifted); `edited`
     /// is the changed range in old coordinates, to keep the generation of
     /// blocks the reparse reproduced unchanged.
-    fn apply_result(&mut self, result: WindowResult, delta: isize, edited: Range<usize>) {
+    fn apply_result(&mut self, result: WindowResult, delta: isize, edited: Range<usize>, buf: &dyn TextBuffer) {
         self.generation += 1;
         let generation = self.generation;
         let WindowResult { start, end, old_blocks, mut blocks, refs } = result;
@@ -393,25 +420,62 @@ impl BlockIndex {
             self.rebuild_ref_table();
             labels.extend(old_table.iter().filter(|(k, v)| self.ref_table.get(*k) != Some(v)).map(|(k, _)| k.clone()));
             labels.extend(self.ref_table.keys().filter(|k| !old_table.contains_key(*k)).cloned());
-            labels.sort();
+            self.labels_lost |= old_table.keys().any(|k| !self.ref_table.contains_key(k));
         }
+        if self.labels_lost {
+            self.labels_lost = false;
+            if let Some(changed) = self.rescan_refs(buf) {
+                labels.extend(changed);
+            }
+        }
+        labels.sort();
+        labels.dedup();
         self.last_change = Change { blocks: old_blocks.start..old_blocks.start + new_count, labels };
     }
 
     /// Move blocks and definitions through an edit without reparsing (the
-    /// touched ones are stale until the pending reparse lands).
-    fn shift_only(&mut self, applied: &AppliedEdit) {
+    /// touched ones are stale until the pending reparse lands). Returns the
+    /// region to mark pending: the edited text and the touched blocks, so
+    /// the later window starts before the first of them, as an immediate
+    /// reparse would.
+    fn shift_only(&mut self, applied: &AppliedEdit) -> Range<usize> {
         let delta = applied.edit.delta();
+        let start = applied.edit.range.start;
+        let mut region = start..start + applied.edit.text.len();
         let (range, mapped) = touched(&self.blocks, applied);
+        if let (Some((first, _)), Some((last, _))) = (mapped.first(), mapped.last()) {
+            region = region.start.min(first.start)..region.end.max(last.end);
+        }
         self.blocks.splice(range, mapped, delta);
         let (range, mapped) = touched(&self.refs, applied);
         let refs_changed = !range.is_empty();
         self.refs.splice(range, mapped, delta);
         if refs_changed {
+            let before = self.ref_table.len();
             self.rebuild_ref_table();
+            self.labels_lost |= self.ref_table.len() < before;
         }
         self.generation += 1;
         self.last_change = Change::default();
+        region
+    }
+
+    /// pulldown-cmark keeps only the first definition of a label in each
+    /// parse, so when a label's definition disappears a later duplicate
+    /// may have been dropped by an earlier window parse. Re-collect all
+    /// definitions from the whole text (documents up to
+    /// [`MAX_REF_RESCAN`]; larger ones keep the possibly missing label).
+    /// Returns the labels whose definition changed.
+    fn rescan_refs(&mut self, buf: &dyn TextBuffer) -> Option<Vec<String>> {
+        if buf.len_bytes() > MAX_REF_RESCAN {
+            return None;
+        }
+        let text = buf.text();
+        let parser = Parser::new_ext(&text, markdown_options());
+        self.refs = Tree::from_entries(ref_entries(&parser, 0));
+        let old_table = std::mem::take(&mut self.ref_table);
+        self.rebuild_ref_table();
+        Some(self.ref_table.iter().filter(|(k, v)| old_table.get(*k) != Some(v)).map(|(k, _)| k.clone()).collect())
     }
 
     fn rebuild_ref_table(&mut self) {
@@ -605,15 +669,7 @@ fn parse_window(src: &str, base: usize, generation: u64) -> Parsed {
     let mut blocks = Vec::new();
     let mut depth = 0usize;
     let parser = Parser::new_ext(src, markdown_options());
-    let mut refs: Vec<(Range<usize>, RefDef)> = parser
-        .reference_definitions()
-        .iter()
-        .map(|(label, def)| {
-            let link = LinkRef { dest: def.dest.to_string(), title: def.title.as_ref().map(|t| t.to_string()) };
-            (base + def.span.start..base + def.span.end, RefDef { label: normalize_label(label), link })
-        })
-        .collect();
-    refs.sort_by_key(|(r, _)| r.start);
+    let refs = ref_entries(&parser, base);
     for (event, range) in parser.into_offset_iter() {
         match event {
             Event::Start(tag) => {
@@ -634,6 +690,21 @@ fn parse_window(src: &str, base: usize, generation: u64) -> Parsed {
         }
     }
     (blocks, refs)
+}
+
+/// Reference definitions of a parser, with spans shifted by `base`, in
+/// document order.
+fn ref_entries(parser: &Parser<'_>, base: usize) -> Vec<(Range<usize>, RefDef)> {
+    let mut refs: Vec<(Range<usize>, RefDef)> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(label, def)| {
+            let link = LinkRef { dest: def.dest.to_string(), title: def.title.as_ref().map(|t| t.to_string()) };
+            (base + def.span.start..base + def.span.end, RefDef { label: normalize_label(label), link })
+        })
+        .collect();
+    refs.sort_by_key(|(r, _)| r.start);
+    refs
 }
 
 fn trim_trailing_newlines(src: &str, range: Range<usize>) -> usize {
