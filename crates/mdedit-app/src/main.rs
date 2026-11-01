@@ -16,7 +16,10 @@ use mdedit_theme::{ColorToken, Theme};
 use mdedit_view::ViewState;
 
 fn main() -> iced::Result {
-    iced::application(App::new, App::update, App::view).title(App::title).run()
+    let app = iced::application(App::new, App::update, App::view)
+        .title(App::title)
+        .default_font(iced::Font::with_name("Hanken Grotesk"));
+    mdedit_theme::fonts().fold(app, |app, bytes| app.font(bytes)).run()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
