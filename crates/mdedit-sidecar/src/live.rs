@@ -54,6 +54,15 @@ impl LiveAnchors {
         self.pending.iter().any(|&p| p)
     }
 
+    /// Treat every attached range as pending, for when this listener fell
+    /// too far behind the edit log (`EditLog::catch_up` returned `None`).
+    /// Call [`Self::write_back`] beforehand if the ranges are still valid for
+    /// some known text, then [`Self::reanchor_pending`] against the current one.
+    pub fn mark_all_pending(&mut self) {
+        self.pending = self.ranges.iter().map(|r| !r.is_detached()).collect();
+        self.ranges.fill(Resolution::Detached);
+    }
+
     /// Re-anchor the comments an external change touched, from their stored
     /// anchors. Call after the reload's edits are applied.
     pub fn reanchor_pending(&mut self, comments: &[Comment], buf: &dyn TextBuffer) {
@@ -102,7 +111,8 @@ impl EditListener for LiveAnchors {
             let start = applied.map_offset(r.start, true);
             // An end inside or at the end of a replaced range moves to its
             // start: replacement text for the comment's tail is not part of it.
-            let end = if edit.start < r.end && r.end <= edit.end { edit.start } else { applied.map_offset(r.end, false) };
+            let end =
+                if edit.start < r.end && r.end <= edit.end { edit.start } else { applied.map_offset(r.end, false) };
             *res = if start < end { Resolution::Attached(start..end) } else { Resolution::Detached };
         }
     }
@@ -110,7 +120,7 @@ impl EditListener for LiveAnchors {
 
 #[cfg(test)]
 mod tests {
-    use mdedit_core::{Edit, RopeBuffer, TxnId};
+    use mdedit_core::{Document, Edit, RopeBuffer, TxnId};
     use proptest::prelude::*;
 
     use super::*;
@@ -231,6 +241,35 @@ mod tests {
     }
 
     #[test]
+    fn follows_a_document_through_the_edit_log() {
+        let mut doc = Document::from_text("Intro.\n\nA sentence worth a comment.\n");
+        let start = doc.buffer().text().find("worth").unwrap();
+        let mut comments = vec![comment(make_anchor(doc.buffer(), start..start + 5))];
+        let mut live = LiveAnchors::resolve(&comments, doc.buffer());
+        let mut version = doc.log().last_version();
+
+        doc.apply(&Edit::insert(0, "# Title\n\n", EditOrigin::User, TxnId(1)));
+        version = doc.log().catch_up(&mut live, version).unwrap();
+        let r = live.ranges[0].range().unwrap();
+        assert_eq!(&doc.buffer().text()[r], "worth");
+
+        // Reload after an external change: one whole-text External edit.
+        live.write_back(&mut comments, doc.buffer());
+        doc.replace_all("# Title\n\nIntro, rewritten.\n\nA sentence surely worth a comment.\n", EditOrigin::External);
+        doc.log().catch_up(&mut live, version).unwrap();
+        assert!(live.has_pending());
+        live.reanchor_pending(&comments, doc.buffer());
+        let r = live.ranges[0].range().unwrap();
+        assert_eq!(&doc.buffer().text()[r], "worth");
+
+        // Fell behind: resync from the stored anchors.
+        live.write_back(&mut comments, doc.buffer());
+        live.mark_all_pending();
+        live.reanchor_pending(&comments, doc.buffer());
+        assert_eq!(&doc.buffer().text()[live.ranges[0].range().unwrap()], "worth");
+    }
+
+    #[test]
     fn push_and_remove_keep_indices_aligned() {
         let mut f = Fixture::new("a b c d\n", &["b", "d"]);
         f.apply(0..8, "a b c d\n", EditOrigin::External);
@@ -267,7 +306,6 @@ mod tests {
     fn fuzz_edit() -> impl Strategy<Value = FuzzEdit> {
         (any::<usize>(), 0usize..6, alphabet()).prop_map(|(at, del, text)| FuzzEdit { at, del, text })
     }
-
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(512))]
@@ -358,7 +396,7 @@ mod tests {
                 .map(|(p, s)| (p % (text.len() + 1), s))
                 .filter(|(p, _)| !guard.contains(p))
                 .collect();
-            offsets.sort_by(|x, y| y.0.cmp(&x.0));
+            offsets.sort_by_key(|o| std::cmp::Reverse(o.0));
             for (p, s) in offsets {
                 edited.insert_str(p, &s);
                 if p <= start { expected += s.len(); }
