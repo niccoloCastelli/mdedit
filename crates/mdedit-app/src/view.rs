@@ -15,6 +15,7 @@ use crate::app::{
 use crate::app::{EDITOR, VIEW, WindowCmd};
 use crate::command;
 use crate::palette::{self, Scope};
+use crate::separator;
 use crate::settings::Mode;
 use crate::style::{self, Btn, c};
 use crate::tab::{External, Tab};
@@ -36,9 +37,14 @@ impl App {
         let mut middle = row![];
         if self.sidebar.visible {
             middle = middle.push(self.sidebar_view()).push(
-                mouse_area(container(Space::new()).width(4).height(Length::Fill).style(style::divider(t)))
-                    .on_press(Message::SidebarDragStart)
-                    .interaction(iced::mouse::Interaction::ResizingHorizontally),
+                separator::vertical(
+                    c(t, T::BgSubtle),
+                    c(t, T::Bg),
+                    c(t, T::Border),
+                    c(t, T::Accent),
+                    Message::SidebarDrag,
+                )
+                .on_release(Message::SidebarDragEnd),
             );
         }
         middle = middle.push(self.document_area());
@@ -352,8 +358,14 @@ impl App {
             Mode::Edit => edit(),
             Mode::View => mdedit_view::View::new(&tab.doc, &tab.view, t, move |a| Message::View(id, a)).id(VIEW).into(),
             Mode::Split => {
-                row![edit(), vline(t), mdedit_view::view(&tab.doc, &tab.preview, t, move |a| Message::View(id, a)),]
-                    .into()
+                let portion = |r: f32| Length::FillPortion((r * 1000.0).round() as u16);
+                row![
+                    container(edit()).width(portion(self.split_ratio)),
+                    separator::vertical(c(t, T::Bg), c(t, T::Bg), c(t, T::Border), c(t, T::Accent), Message::SplitDrag),
+                    container(mdedit_view::view(&tab.doc, &tab.preview, t, move |a| Message::View(id, a)))
+                        .width(portion(1.0 - self.split_ratio)),
+                ]
+                .into()
             }
         }
     }

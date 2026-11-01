@@ -266,7 +266,7 @@ widget. Every icon button has a tooltip with its shortcut.
 - **Menu bar.** iced has no native menu bar, so it is an in-window bar built
   from our own components (on macOS the first version also uses an in-window
   bar; a native menu via `muda` is a later option).
-- **Sidebar** (240 px, resizable 180-400, collapsible with Ctrl+B) with tabs:
+- **Sidebar** (240 px, resizable 200-400, collapsible with Ctrl+Shift+B) with tabs:
   Files (project mode), Outline (headings), Search, Git (branches, history,
   checkpoints).
 - **Comments panel** (300 px, right, Ctrl+Alt+M) lists threads in document
@@ -290,6 +290,7 @@ new colour.
 | **Floating toolbar** | Appears 150 ms after a non-empty selection settles, 8 px above it (below if no room). Bold, italic, strike, code, link, heading ▾, comment. Hides on typing or Esc. |
 | **Slash menu** | Opens on `/` at line start or after whitespace in View and Edit modes. Filterable list with icon, name, hint; max 8 visible rows. |
 | **Command palette** | Ctrl+Shift+P. Centred, 560 px wide, fuzzy search over every command, shows shortcuts. Ctrl+P is the same palette scoped to files. |
+| **Separator** | Every draggable divider (sidebar, Split, later panels): a 1 px `border` line centred in a 5 px hit area whose halves take the neighbouring surfaces' colours. Hover and drag turn the line `accent` and 2 px wide, with the resize cursor. Static dividers stay plain 1 px `border` lines. |
 | **Tabs** | Document tabs: 32 px, active has `bg` and a 2 px `accent` bottom line (as in the PDF's console tabs), dirty dot `●`. Middle click closes. |
 | **Tree (files)** | 24 px rows, 12 px indent per level, chevron, hover `surface-raised`, selected `accent-soft`. Hidden sidecar files never shown. |
 | **Callout / banner** | `radius-lg`, `eyebrow` title. Variants: info (`bg-subtle`), warning (`warning-bg`), danger. Used for the large-file banner, merge notices, sync errors. |
@@ -413,3 +414,10 @@ table and can be overridden in a `keymap.toml`.
 - 2026-11-01: Ember Light `text-muted` darkened from `#78746F` to `#716D68`
   so it passes AA on `bg-subtle` and `surface-raised` too (sidebar, hovered
   menu items), as the 8.7 contrast test requires.
+- 2026-11-01: resizable separators are 1 px hairlines with a 5 px grab area
+  that turn `accent` (2 px) on hover and drag, replacing the 4 px grey
+  sidebar handle (Niccolo's request). The Split divider follows the same
+  rule and is now draggable (20-80 %). The sidebar minimum is 200 px, not
+  180, so the Files/Outline/Search/Git switcher fits.
+- 2026-11-01: text selection has its own `selection` token, stronger than
+  `accent-soft`, which was too faint on `bg`.
