@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{Key, Modifiers, key::Named};
-use iced::{Event, Point, Subscription, Task, event, mouse, window};
+use iced::{Event, Point, Size, Subscription, Task, event, mouse, window};
 use mdedit_core::command as core_cmd;
 use mdedit_core::document::SavePoint;
 use mdedit_core::parse::OutlineEntry;
@@ -106,6 +106,9 @@ pub enum Message {
         captured: bool,
     },
     MenuOpen(Option<usize>),
+    /// Right-click menu at a window position; `None` closes it.
+    ContextMenu(Option<Point>),
+    WindowResized(Size),
     MenuHover(usize),
     SelectTab(usize),
     CloseTab(usize),
@@ -171,6 +174,8 @@ pub struct App {
     pub sidebar: SidebarState,
     pub comments_visible: bool,
     pub menu_open: Option<usize>,
+    pub context_menu: Option<Point>,
+    pub window_size: Size,
     pub palette: Option<Palette>,
     pub dialog: Option<Dialog>,
     pub toasts: Vec<Toast>,
@@ -244,6 +249,8 @@ impl App {
             next_id: 1,
             next_untitled: 1,
             menu_open: None,
+            context_menu: None,
+            window_size: Size::new(1200.0, 800.0),
             palette: None,
             dialog: None,
             toasts: Vec::new(),
@@ -422,6 +429,7 @@ impl App {
                 _ => None,
             }),
             window::close_requests().map(|_| Message::CloseRequested),
+            window::resize_events().map(|(_, size)| Message::WindowResized(size)),
             iced::system::theme_changes().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
             watch::changes(self.watched_paths()).map(Message::FileChanged),
         ];
@@ -466,7 +474,10 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        let focus_key = |a: &Self| (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), a.dialog.is_some());
+        let focus_key = |a: &Self| {
+            let menu = a.menu_open.is_some() || a.context_menu.is_some();
+            (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), a.dialog.is_some(), menu)
+        };
         let before = focus_key(self);
         let jump = matches!(message, Message::OutlineJump(_) | Message::SearchJump(..));
         let is_edit = matches!(message, Message::Editor(_, mdedit_editor::Action::Edit(_)) | Message::TraceType);
@@ -498,10 +509,16 @@ impl App {
         match message {
             Message::Run(id) => {
                 self.menu_open = None;
+                self.context_menu = None;
                 return self.run(id);
             }
             Message::Key { key, modifiers, captured } => return self.on_key(key, modifiers, captured),
             Message::MenuOpen(m) => self.menu_open = if self.menu_open == m { None } else { m },
+            Message::ContextMenu(p) => {
+                self.menu_open = None;
+                self.context_menu = p.filter(|_| self.palette.is_none() && self.dialog.is_none());
+            }
+            Message::WindowResized(size) => self.window_size = size,
             Message::MenuHover(i) => {
                 if self.menu_open.is_some() {
                     self.menu_open = Some(i);
@@ -774,7 +791,7 @@ impl App {
 
     fn on_key(&mut self, key: Key, modifiers: Modifiers, captured: bool) -> Task<Message> {
         if key == Key::Named(Named::Escape) {
-            if self.palette.take().is_some() || self.menu_open.take().is_some() {
+            if self.palette.take().is_some() || self.menu_open.take().is_some() || self.context_menu.take().is_some() {
                 return Task::none();
             }
             if self.dialog.is_some() {
@@ -892,6 +909,34 @@ impl App {
                     if let Some(sel) = sel {
                         tab.set_selection(sel);
                     }
+                }
+            }
+            Cut | Copy => {
+                let Some(tab) = self.active_tab_mut() else { return Task::none() };
+                let range = tab.selection().range();
+                if range.is_empty() {
+                    return Task::none();
+                }
+                let text = tab.doc.buffer().slice(range.clone()).into_owned();
+                if cmd == Cut && !tab.read_only() {
+                    let txn = tab.doc.next_txn();
+                    tab.apply(&Edit { range: range.clone(), text: String::new(), origin: EditOrigin::User, txn });
+                    tab.set_selection(Selection::cursor(range.start));
+                }
+                return iced::clipboard::write(text);
+            }
+            Paste => {
+                let Some(tab) = self.active_tab() else { return Task::none() };
+                if tab.read_only() {
+                    return Task::none();
+                }
+                let id = tab.id;
+                return iced::clipboard::read().map(move |t| Message::Paste(id, t));
+            }
+            SelectAll => {
+                if let Some(tab) = self.active_tab_mut() {
+                    let len = tab.doc.buffer().len_bytes();
+                    tab.set_selection(Selection { anchor: 0, head: len });
                 }
             }
             Find | FindInFiles | ShowSearch => {
