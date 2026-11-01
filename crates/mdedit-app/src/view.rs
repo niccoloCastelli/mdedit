@@ -157,6 +157,7 @@ impl App {
                         text(entry.title).size(UI).width(Length::Fill),
                         text(shortcut).size(UI_SMALL).color(c(t, T::TextMuted)),
                     ]
+                    .height(Length::Fill)
                     .align_y(Alignment::Center);
                     list = list.push(
                         button(label)
@@ -419,8 +420,8 @@ impl App {
         for st in SidebarTab::ALL {
             let on = st == self.sidebar.tab;
             tabs = tabs.push(
-                button(text(st.label()).size(UI_SMALL))
-                    .padding(Padding::from([SPACE_1, SPACE_2]))
+                button(text(st.label()).size(UI_SMALL).wrapping(iced::widget::text::Wrapping::None))
+                    .padding(Padding::from([SPACE_1, 6.0]))
                     .style(style::btn(t, if on { Btn::Toggled } else { Btn::Ghost }))
                     .on_press(Message::Sidebar(st)),
             );
@@ -444,6 +445,7 @@ impl App {
         )
         .width(self.sidebar.width)
         .height(Length::Fill)
+        .clip(true)
         .style(style::chrome(t))
         .into()
     }
@@ -599,7 +601,7 @@ impl App {
             for m in [Mode::Edit, Mode::Split, Mode::View] {
                 let on = tab.mode == m;
                 let enabled = m == Mode::Edit || !tab.doc.is_large();
-                let b = button(text(m.label()).size(UI_SMALL))
+                let b = button(text(m.label()).size(UI_SMALL).height(Length::Fill).align_y(Alignment::Center))
                     .padding(Padding::from([0.0, SPACE_2]))
                     .height(STATUS_BAR_HEIGHT - 4.0)
                     .style(style::btn(t, if on { Btn::Toggled } else { Btn::Ghost }))

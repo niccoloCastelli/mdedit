@@ -185,6 +185,10 @@ impl Default for FormatToolbar {
     }
 }
 
+/// The spec's 180 px minimum is too narrow for the Files/Outline/Search/Git
+/// switcher, so the sidebar stops where all four still fit.
+const SIDEBAR_MIN: f32 = 200.0;
+
 const TOOLBAR_DELAY: Duration = Duration::from_millis(150);
 
 pub struct SidebarState {
@@ -272,7 +276,7 @@ impl App {
                 visible: if fresh { true } else { session.sidebar_visible },
                 tab: SidebarTab::from_key(&session.sidebar_tab),
                 width: if session.sidebar_width > 0.0 {
-                    session.sidebar_width.clamp(mdedit_theme::space::SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX)
+                    session.sidebar_width.clamp(SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX)
                 } else {
                     mdedit_theme::space::SIDEBAR_WIDTH
                 },
@@ -703,7 +707,7 @@ impl App {
             }
             Message::SidebarDragStart => self.dragging_sidebar = true,
             Message::SidebarDrag(p) => {
-                self.sidebar.width = p.x.clamp(mdedit_theme::space::SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX);
+                self.sidebar.width = p.x.clamp(SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX);
             }
             Message::SidebarDragEnd => {
                 self.dragging_sidebar = false;
