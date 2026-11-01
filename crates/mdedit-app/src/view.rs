@@ -76,7 +76,7 @@ impl App {
         let mut bar = row![].spacing(0).align_y(Alignment::Center);
         for (i, (label, _)) in command::menus().iter().enumerate() {
             let open = self.menu_open == Some(i);
-            let b = button(text(*label).size(UI))
+            let b = button(text(*label).size(UI).height(Length::Fill).align_y(Alignment::Center))
                 .padding(Padding::from([0.0, SPACE_3]))
                 .width(menu_title_width(label))
                 .height(MENU_BAR_HEIGHT - 4.0)
@@ -194,6 +194,7 @@ impl App {
                 .on_press(Message::CloseTab(i));
             let label = row![text(tab.title()).size(UI), text(dirty).size(UI_SMALL).color(c(t, T::Accent)), close]
                 .spacing(SPACE_2)
+                .height(Length::Fill)
                 .align_y(Alignment::Center);
             let b = button(label)
                 .height(TAB_HEIGHT - 2.0)
