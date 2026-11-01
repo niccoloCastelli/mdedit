@@ -196,12 +196,10 @@ impl App {
         match tab.mode {
             Mode::Edit => edit(),
             Mode::View => mdedit_view::view(&tab.doc, &tab.view, t, move |a| Message::View(id, a)),
-            Mode::Split => row![
-                edit(),
-                vline(t),
-                mdedit_view::view(&tab.doc, &tab.preview, t, move |a| Message::View(id, a)),
-            ]
-            .into(),
+            Mode::Split => {
+                row![edit(), vline(t), mdedit_view::view(&tab.doc, &tab.preview, t, move |a| Message::View(id, a)),]
+                    .into()
+            }
         }
     }
 
