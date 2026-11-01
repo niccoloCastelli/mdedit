@@ -47,6 +47,37 @@ pub struct View<'a, Message> {
     id: Option<adv_widget::Id>,
 }
 
+impl<Message> View<'_, Message> {
+    /// Window-space bounding box of the visible selection, clipped to the
+    /// widget (the same rectangles `draw` fills).
+    fn selection_rect(&self, st: &State, bounds: Rectangle) -> Option<Rectangle> {
+        let sel = self.selection(st).range();
+        if sel.is_empty() || st.focus.is_none() || self.doc.is_large() {
+            return None;
+        }
+        let mut out: Option<Rectangle> = None;
+        for v in &st.visible {
+            let origin = Vector::new(bounds.x + st.col_x, bounds.y + v.y);
+            let laid = v.to_laid(sel.start)..v.to_laid(sel.end);
+            for item in &v.layout.items {
+                let Item::Text(t) = item else { continue };
+                let Some(src) = t.source_range() else { continue };
+                if laid.start > src.end || laid.end < src.start {
+                    continue;
+                }
+                let o = Vector::new(origin.x + t.pos.x, origin.y + t.pos.y);
+                for tr in t.text_ranges(laid.clone()) {
+                    for rect in t.range_rects(tr.start, tr.end) {
+                        let r = rect + o;
+                        out = Some(out.map_or(r, |a| a.union(&r)));
+                    }
+                }
+            }
+        }
+        out.and_then(|r| r.intersection(&bounds))
+    }
+}
+
 impl<'a, Message> View<'a, Message> {
     pub fn new(
         doc: &'a Document,
@@ -151,6 +182,8 @@ struct State {
     clicks: Option<(Instant, Point, u8)>,
     modifiers: Modifiers,
     preedit: Option<input_method::Preedit>,
+    /// The last `SelectionRect` published.
+    sel_rect: Option<Rectangle>,
 }
 
 impl State {
@@ -600,7 +633,7 @@ impl<'a, Message> View<'a, Message> {
                     }
                 }
                 Action::Scroll(y) => st.echo = Some(*y),
-                Action::OpenLink(_) => {}
+                Action::OpenLink(_) | Action::SelectionRect(_) => {}
             }
             shell.publish((self.on_action)(action));
         }
@@ -1283,6 +1316,11 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                     _ => InputMethod::Disabled,
                 };
                 shell.request_input_method(&ime);
+                let rect = self.selection_rect(st, bounds);
+                if rect != st.sel_rect {
+                    st.sel_rect = rect;
+                    shell.publish((self.on_action)(Action::SelectionRect(rect)));
+                }
             }
             _ => {}
         }

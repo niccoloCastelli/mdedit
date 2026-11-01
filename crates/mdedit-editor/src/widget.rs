@@ -179,6 +179,8 @@ struct State {
     queued: VecDeque<Event>,
     /// Shift is held (for shift-click).
     shift: bool,
+    /// The last `SelectionRect` published.
+    sel_rect: Option<Rectangle>,
     // Measurements.
     keystroke_started: Cell<Option<(Instant, u64)>>,
     layout_time: Cell<Duration>,
@@ -211,6 +213,7 @@ impl Default for State {
             local_selection: None,
             queued: VecDeque::new(),
             shift: false,
+            sel_rect: None,
             keystroke_started: Cell::new(None),
             layout_time: Cell::new(Duration::ZERO),
         }
@@ -605,6 +608,33 @@ impl State {
 }
 
 impl<Message> Editor<'_, Message> {
+    /// Window-space bounding box of the visible selection, clipped to the
+    /// widget (the same rectangles `draw` fills).
+    fn selection_rect(&self, st: &State, bounds: Rectangle) -> Option<Rectangle> {
+        let sel = self.selection(st).range();
+        if sel.is_empty() || st.focus.is_none() {
+            return None;
+        }
+        let lines = motion::line_count(self.doc.buffer());
+        let newline_w = self.look.metrics(LineKind::Prose).size * 0.4;
+        let mut out: Option<Rectangle> = None;
+        for v in &st.visible {
+            let line_end = v.start + v.len;
+            if v.y + v.shaped.height < 0.0 || v.y > bounds.height || sel.start > line_end || sel.end <= v.start {
+                continue;
+            }
+            let s = sel.start.max(v.start) - v.start;
+            let e = sel.end.min(line_end) - v.start;
+            let newline = sel.end > line_end && v.line + 1 < lines;
+            for (x, top, w, rh) in geometry::selection_rects(&v.shaped.paragraph, s, e, newline, newline_w) {
+                let r =
+                    Rectangle::new(Point::new(bounds.x + st.geom.text_x + x, bounds.y + v.y + top), Size::new(w, rh));
+                out = Some(out.map_or(r, |o| o.union(&r)));
+            }
+        }
+        out.and_then(|r| r.intersection(&bounds))
+    }
+
     fn selection(&self, st: &State) -> Selection {
         st.local_selection.unwrap_or(self.state.selection)
     }
@@ -1134,6 +1164,11 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
                     _ => InputMethod::Disabled,
                 };
                 shell.request_input_method(&ime);
+                let rect = self.selection_rect(st, bounds);
+                if rect != st.sel_rect {
+                    st.sel_rect = rect;
+                    shell.publish((self.on_action)(Action::SelectionRect(rect)));
+                }
             }
             _ => {}
         }

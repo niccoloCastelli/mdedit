@@ -74,6 +74,10 @@ pub enum Action {
     Select(Selection),
     Scroll(f32),
     OpenLink(String),
+    /// Window-space bounds of the visible part of the selection, sent when
+    /// it changes (for the floating format toolbar). `None` when the
+    /// selection is empty, scrolled away or the view is not focused.
+    SelectionRect(Option<iced::Rectangle>),
 }
 
 /// The View-mode (or, with `state.read_only`, Split preview) view of `doc`.

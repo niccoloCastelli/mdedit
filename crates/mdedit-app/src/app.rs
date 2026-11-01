@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{Key, Modifiers, key::Named};
-use iced::{Event, Point, Size, Subscription, Task, event, mouse, window};
+use iced::{Event, Point, Rectangle, Size, Subscription, Task, event, mouse, window};
 use mdedit_core::command as core_cmd;
 use mdedit_core::document::SavePoint;
 use mdedit_core::parse::OutlineEntry;
@@ -109,6 +109,9 @@ pub enum Message {
     /// Right-click menu at a window position; `None` closes it.
     ContextMenu(Option<Point>),
     WindowResized(Size),
+    /// 150 ms after the selection last moved: show the format toolbar.
+    ToolbarTick,
+    ToolbarHeading(bool),
     MenuHover(usize),
     SelectTab(usize),
     CloseTab(usize),
@@ -152,6 +155,26 @@ pub enum PaletteMsg {
     Close,
 }
 
+/// The floating format toolbar (DESIGN_SYSTEM 7): it follows the selection
+/// rectangle the document widgets report and shows once it settles.
+#[derive(Debug)]
+pub struct FormatToolbar {
+    pub rect: Option<Rectangle>,
+    changed: Instant,
+    pub visible: bool,
+    /// Hidden by typing or Esc until the selection moves again.
+    dismissed: bool,
+    pub heading_open: bool,
+}
+
+impl Default for FormatToolbar {
+    fn default() -> Self {
+        Self { rect: None, changed: Instant::now(), visible: false, dismissed: false, heading_open: false }
+    }
+}
+
+const TOOLBAR_DELAY: Duration = Duration::from_millis(150);
+
 pub struct SidebarState {
     pub visible: bool,
     pub tab: SidebarTab,
@@ -175,6 +198,7 @@ pub struct App {
     pub comments_visible: bool,
     pub menu_open: Option<usize>,
     pub context_menu: Option<Point>,
+    pub toolbar: FormatToolbar,
     pub window_size: Size,
     pub palette: Option<Palette>,
     pub dialog: Option<Dialog>,
@@ -250,6 +274,7 @@ impl App {
             next_untitled: 1,
             menu_open: None,
             context_menu: None,
+            toolbar: FormatToolbar::default(),
             window_size: Size::new(1200.0, 800.0),
             palette: None,
             dialog: None,
@@ -475,7 +500,7 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let focus_key = |a: &Self| {
-            let menu = a.menu_open.is_some() || a.context_menu.is_some();
+            let menu = a.menu_open.is_some() || a.context_menu.is_some() || a.toolbar.visible;
             (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), a.dialog.is_some(), menu)
         };
         let before = focus_key(self);
@@ -510,6 +535,7 @@ impl App {
             Message::Run(id) => {
                 self.menu_open = None;
                 self.context_menu = None;
+                self.toolbar.heading_open = false;
                 return self.run(id);
             }
             Message::Key { key, modifiers, captured } => return self.on_key(key, modifiers, captured),
@@ -519,6 +545,13 @@ impl App {
                 self.context_menu = p.filter(|_| self.palette.is_none() && self.dialog.is_none());
             }
             Message::WindowResized(size) => self.window_size = size,
+            Message::ToolbarTick => {
+                let t = &mut self.toolbar;
+                if t.rect.is_some() && !t.dismissed && t.changed.elapsed() >= TOOLBAR_DELAY {
+                    t.visible = true;
+                }
+            }
+            Message::ToolbarHeading(open) => self.toolbar.heading_open = open,
             Message::MenuHover(i) => {
                 if self.menu_open.is_some() {
                     self.menu_open = Some(i);
@@ -791,6 +824,12 @@ impl App {
 
     fn on_key(&mut self, key: Key, modifiers: Modifiers, captured: bool) -> Task<Message> {
         if key == Key::Named(Named::Escape) {
+            if self.toolbar.visible {
+                self.toolbar.visible = false;
+                self.toolbar.heading_open = false;
+                self.toolbar.dismissed = true;
+                return Task::none();
+            }
             if self.palette.take().is_some() || self.menu_open.take().is_some() || self.context_menu.take().is_some() {
                 return Task::none();
             }
@@ -1337,8 +1376,33 @@ impl App {
         }
     }
 
+    /// A document widget reported where its selection is. Only the widget
+    /// that takes typing in the active tab counts (not the Split preview).
+    fn on_selection_rect(&mut self, id: TabId, from_view: bool, rect: Option<Rectangle>) -> Task<Message> {
+        let ours = self.active_tab().is_some_and(|t| t.id == id && (t.mode == Mode::View) == from_view);
+        if !ours || rect == self.toolbar.rect {
+            return Task::none();
+        }
+        self.toolbar = FormatToolbar { rect, changed: Instant::now(), ..FormatToolbar::default() };
+        if rect.is_none() {
+            return Task::none();
+        }
+        Task::perform(tokio::time::sleep(TOOLBAR_DELAY), |_| Message::ToolbarTick)
+    }
+
+    fn hide_toolbar_for_typing(&mut self) {
+        self.toolbar.visible = false;
+        self.toolbar.heading_open = false;
+        self.toolbar.dismissed = true;
+    }
+
     fn on_editor(&mut self, id: TabId, action: mdedit_editor::Action) -> Task<Message> {
         use mdedit_editor::Action;
+        match &action {
+            Action::SelectionRect(rect) => return self.on_selection_rect(id, false, *rect),
+            Action::Edit(_) => self.hide_toolbar_for_typing(),
+            _ => {}
+        }
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
@@ -1380,12 +1444,18 @@ impl App {
             }
             Action::Undo => return self.run_app(AppCommand::Undo),
             Action::Redo => return self.run_app(AppCommand::Redo),
+            Action::SelectionRect(_) => {}
         }
         Task::none()
     }
 
     fn on_view(&mut self, id: TabId, action: mdedit_view::Action) -> Task<Message> {
         use mdedit_view::Action;
+        match &action {
+            Action::SelectionRect(rect) => return self.on_selection_rect(id, true, *rect),
+            Action::Edit(_) => self.hide_toolbar_for_typing(),
+            _ => {}
+        }
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
@@ -1406,6 +1476,7 @@ impl App {
                 }
             }
             Action::OpenLink(url) => self.toast(format!("Link: {url}")),
+            Action::SelectionRect(_) => {}
         }
         Task::none()
     }

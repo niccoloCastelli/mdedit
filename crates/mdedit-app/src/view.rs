@@ -56,6 +56,14 @@ impl App {
         if let Some(i) = self.menu_open {
             layers.push(self.menu_dropdown(i));
         }
+        let modal = self.menu_open.is_some() || self.palette.is_some() || self.dialog.is_some();
+        if self.toolbar.visible
+            && !modal
+            && self.context_menu.is_none()
+            && let Some(rect) = self.toolbar.rect
+        {
+            layers.push(self.toolbar_view(rect));
+        }
         if let Some(at) = self.context_menu {
             layers.push(self.context_menu_view(at));
         }
@@ -162,6 +170,73 @@ impl App {
             .on_press(Message::ContextMenu(None))
             .on_right_press(Message::ContextMenu(None));
         stack![catcher, pin(opaque(menu)).x(x).y(y)].into()
+    }
+
+    /// Floating format toolbar (DESIGN_SYSTEM 7), 8 px above the selection
+    /// or below it when there is no room.
+    fn toolbar_view(&self, sel: iced::Rectangle) -> Element<'_, Message> {
+        let t = &self.theme;
+        const BUTTON: f32 = 28.0;
+        let icon_button = |icon: &str, msg: Option<Message>, tip: String| -> Element<'_, Message> {
+            let glyph: Element<'_, Message> = match mdedit_theme::icon(icon).map(iced::widget::svg::Handle::from_memory)
+            {
+                Some(h) => iced::widget::svg(h)
+                    .width(16)
+                    .height(16)
+                    .style(move |_, _| iced::widget::svg::Style { color: Some(c(t, T::TextSecondary)) })
+                    .into(),
+                None => text(icon.to_string()).size(UI).into(),
+            };
+            let b = button(container(glyph).center(Length::Fill))
+                .width(BUTTON)
+                .height(BUTTON)
+                .padding(0)
+                .style(style::btn(t, Btn::Ghost))
+                .on_press_maybe(msg);
+            with_tooltip(t, b, &tip)
+        };
+        let tip = |id: &str| {
+            let title = command::find(id).map_or(id, |e| e.title);
+            match self.keymap.shortcut_for(id) {
+                Some(k) => format!("{title} ({k})"),
+                None => title.to_string(),
+            }
+        };
+        let mut bar = row![].spacing(2).align_y(Alignment::Center);
+        for id in ["format.bold", "format.italic", "format.strike", "format.code", "format.link"] {
+            let icon = command::find(id).and_then(|e| e.icon).unwrap_or("circle");
+            bar = bar.push(icon_button(icon, Some(Message::Run(id)), tip(id)));
+        }
+        let heading = button(
+            row![
+                text("H").size(UI).font(bold()).color(c(t, T::TextSecondary)),
+                text("▾").size(UI_SMALL).color(c(t, T::TextMuted)),
+            ]
+            .spacing(2)
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+        )
+        .height(BUTTON)
+        .padding(Padding::from([0.0, 6.0]))
+        .style(style::btn(t, if self.toolbar.heading_open { Btn::Toggled } else { Btn::Ghost }))
+        .on_press(Message::ToolbarHeading(!self.toolbar.heading_open));
+        bar = bar.push(with_tooltip(t, heading, "Heading"));
+        bar = bar.push(icon_button("message-square", None, "Comment (coming with comments)".into()));
+
+        let width = 6.0 * BUTTON + 44.0 + 6.0 * 2.0 + 2.0 * SPACE_1 + 2.0;
+        let height = BUTTON + 2.0 * SPACE_1 + 2.0;
+        let top_limit = MENU_BAR_HEIGHT + TAB_HEIGHT;
+        let x = (sel.center_x() - width / 2.0).clamp(SPACE_1, (self.window_size.width - width - SPACE_1).max(SPACE_1));
+        let above = sel.y - 8.0 - height;
+        let y = if above >= top_limit { above } else { sel.y + sel.height + 8.0 };
+        let toolbar = container(bar).padding(SPACE_1).style(style::popover(t, RADIUS_MD));
+        let mut layer = stack![pin(opaque(toolbar)).x(x).y(y)];
+        if self.toolbar.heading_open {
+            let items = [Some("format.paragraph"), Some("format.h1"), Some("format.h2"), Some("format.h3")];
+            let hx = x + SPACE_1 + 1.0 + 5.0 * (BUTTON + 2.0);
+            layer = layer.push(pin(opaque(self.menu_list(&items))).x(hx).y(y + height + 4.0));
+        }
+        layer.into()
     }
 
     fn menu_checked(&self, id: &str) -> bool {
@@ -651,10 +726,13 @@ fn placeholder<'a>(t: &'a Theme, msg: &'a str) -> Element<'a, Message> {
 }
 
 fn sidebar_row<'a>(t: &'a Theme, label: iced::widget::Text<'a>, msg: Message, indent: f32) -> Element<'a, Message> {
-    button(label)
+    // One line per row: long headings and results are cut, not wrapped
+    // over the next row.
+    let label = label.wrapping(iced::widget::text::Wrapping::None).height(Length::Fill).align_y(Alignment::Center);
+    button(iced::widget::container(label).clip(true))
         .width(Length::Fill)
         .height(24)
-        .padding(Padding { top: 3.0, right: SPACE_2, bottom: 3.0, left: SPACE_2 + indent })
+        .padding(Padding { top: 0.0, right: SPACE_2, bottom: 0.0, left: SPACE_2 + indent })
         .style(style::btn(t, Btn::MenuItem))
         .on_press(msg)
         .into()
