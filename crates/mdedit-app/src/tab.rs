@@ -112,6 +112,11 @@ impl Tab {
         let sel = self.selection();
         self.editor.selection = sel;
         self.view.selection = sel;
+        // View mode opens where the editor was: the editor reports its top
+        // line after every scroll, and the preview keeps the latest one.
+        if mode == Mode::View && self.mode != Mode::View {
+            self.view.sync = self.preview.sync;
+        }
         self.mode = mode;
     }
 

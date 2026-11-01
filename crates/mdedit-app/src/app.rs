@@ -371,10 +371,15 @@ impl App {
     /// Push editor settings into every tab's widget state.
     fn apply_editor_settings(&mut self) {
         let e = &self.settings.editor;
+        let zoom = self.settings.appearance.zoom;
         for tab in &mut self.tabs {
             tab.editor.line_numbers = e.line_numbers;
             tab.editor.monospace = e.monospace;
             tab.editor.full_width = e.full_width;
+            for v in [&mut tab.view, &mut tab.preview] {
+                v.full_width = e.full_width;
+                v.zoom = zoom;
+            }
         }
     }
 
@@ -385,6 +390,10 @@ impl App {
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
         tab.editor.full_width = self.settings.editor.full_width;
+        for v in [&mut tab.view, &mut tab.preview] {
+            v.full_width = self.settings.editor.full_width;
+            v.zoom = self.settings.appearance.zoom;
+        }
         self.next_id += 1;
         self.next_untitled += 1;
         self.tabs.push(tab);
@@ -922,6 +931,7 @@ impl App {
                     _ => 1.0,
                 };
                 *z = (*z * 10.0).round() / 10.0;
+                self.apply_editor_settings();
                 self.store_settings();
             }
             ToggleFullWidth => {
@@ -1023,6 +1033,10 @@ impl App {
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
         tab.editor.full_width = self.settings.editor.full_width;
+        for v in [&mut tab.view, &mut tab.preview] {
+            v.full_width = self.settings.editor.full_width;
+            v.zoom = self.settings.appearance.zoom;
+        }
         if tab.read_only() {
             self.toast("Not valid UTF-8: opened read-only.");
         }
@@ -1296,8 +1310,10 @@ impl App {
                 // The jump happened; clear it so the same byte can be asked for again.
                 tab.editor.scroll_to_byte = None;
             }
-            // Split scroll sync (ARCHITECTURE 4.3); wired by the app shell.
-            Action::TopAnchor { .. } => {}
+            // Split mode: the preview follows the source (ARCHITECTURE 4.3).
+            Action::TopAnchor { byte, fraction } => {
+                tab.preview.sync = Some(mdedit_view::SyncAnchor { byte, fraction });
+            }
             Action::Copy(text) => return iced::clipboard::write(text),
             Action::Paste => {
                 if tab.read_only() {
