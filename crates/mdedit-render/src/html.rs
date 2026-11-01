@@ -77,8 +77,14 @@ impl Writer {
                 self.inlines(inlines);
                 let _ = writeln!(self.out, "</h{level}>");
             }
-            LayoutNode::BlockQuote { children, .. } => {
-                self.out.push_str("<blockquote>\n");
+            LayoutNode::BlockQuote { callout, children, .. } => {
+                match callout {
+                    Some(kind) => {
+                        let class = kind.title().to_lowercase();
+                        let _ = writeln!(self.out, "<blockquote class=\"markdown-alert-{class}\">");
+                    }
+                    None => self.out.push_str("<blockquote>\n"),
+                }
                 for c in children {
                     self.node(c, false);
                 }

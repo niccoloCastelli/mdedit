@@ -14,7 +14,7 @@ use iced::advanced::text::{self, LineHeight, Paragraph as _, Shaping, Span, Text
 use iced::border::Radius;
 use iced::{Border, Color, Font, Pixels, Point, Rectangle, Size, alignment};
 use mdedit_core::highlight::{StyledRange, SyntaxToken};
-use mdedit_render::{Align, Inline, LayoutNode, ListItem, SpanStyle};
+use mdedit_render::{Align, Callout, Inline, LayoutNode, ListItem, SpanStyle};
 use mdedit_theme::space::*;
 use mdedit_theme::typography::{self, TextStyle};
 
@@ -467,6 +467,20 @@ pub(crate) fn layout_source(
     }
 }
 
+/// Keep a revealed image paragraph's pictures visible under its source, so
+/// editing the markdown doesn't make the image disappear. Captions and
+/// loading or error labels are left out: their text would map to the same
+/// source as the revealed markdown.
+pub(crate) fn append_images(ctx: &Ctx<'_>, layout: &mut BlockLayout, node: &LayoutNode) {
+    let LayoutNode::Paragraph { inlines, .. } = node else { return };
+    let mut b = Builder { ctx, items: Vec::new(), table: None, images: false };
+    let y = layout.height + SPACE_2;
+    let Some(h) = b.image_paragraph(inlines, 0.0, y, ctx.width) else { return };
+    layout.items.extend(b.items.into_iter().filter(|i| !matches!(i, Item::Text(_))));
+    layout.height = y + h;
+    layout.image_gen = Some(ctx.image_gen);
+}
+
 fn pad(r: Rectangle, x: f32, y: f32) -> Rectangle {
     Rectangle::new(Point::new(r.x - x, r.y - y), Size::new(r.width + 2.0 * x, r.height + 2.0 * y))
 }
@@ -645,10 +659,11 @@ impl Builder<'_, '_> {
                     let muted = RunStyle { color: c.muted, uppercase: false, ..*rs };
                     self.push_text(r, &format!("[{label}]"), style, source.clone(), false, &muted, link);
                 }
-                Inline::FootnoteRef { label, source } => {
+                Inline::FootnoteRef { label, number, source } => {
                     let style = SpanStyle { superscript: true, ..SpanStyle::default() };
                     let accent = RunStyle { color: c.accent_text, uppercase: false, ..*rs };
-                    self.push_text(r, label, style, source.clone(), false, &accent, link);
+                    let text = number.map_or_else(|| label.clone(), |n| n.to_string());
+                    self.push_text(r, &text, style, source.clone(), false, &accent, link);
                 }
                 Inline::SoftBreak { source } => {
                     self.push_text(r, " ", SpanStyle::default(), source.clone(), false, rs, link)
@@ -731,6 +746,9 @@ impl Builder<'_, '_> {
                 let runs = self.runs(inlines, &rs);
                 self.paragraph(runs, &rs, x, y, width, true).1
             }
+            LayoutNode::BlockQuote { callout: Some(kind), children, .. } => {
+                self.callout(*kind, children, node.source().start, x, y, width)
+            }
             LayoutNode::BlockQuote { children, .. } => {
                 let inset = 3.0 + SPACE_4;
                 let h = self.children(children, x + inset, y, width - inset, c.secondary, SPACE_4);
@@ -760,7 +778,8 @@ impl Builder<'_, '_> {
                 });
                 2.0 * pad + 1.0
             }
-            LayoutNode::FootnoteDefinition { label, children, .. } => {
+            LayoutNode::FootnoteDefinition { label, number, children, .. } => {
+                let label = &number.map_or_else(|| label.clone(), |n| n.to_string());
                 let base = scaled(typography::UI, z);
                 let rs = RunStyle { base, font: self.look().font(&base), color: c.accent_text, uppercase: false };
                 let mut runs = self.runs(&[], &rs);
@@ -787,6 +806,40 @@ impl Builder<'_, '_> {
             }
             LayoutNode::Group { children, .. } => self.children(children, x, y, width, color, SPACE_4),
         }
+    }
+
+    /// A GitHub alert as a DESIGN_SYSTEM callout: `radius-lg` box, `eyebrow`
+    /// title, info / warning / danger tones.
+    fn callout(&mut self, kind: Callout, children: &[LayoutNode], at: usize, x: f32, y: f32, width: f32) -> f32 {
+        let c = self.look().colors;
+        let z = self.ctx.zoom;
+        let (fill, tone) = match kind {
+            Callout::Note => (c.bg_subtle, c.info),
+            Callout::Tip => (c.bg_subtle, c.success),
+            Callout::Important => (c.bg_subtle, c.accent_text),
+            Callout::Warning => (c.warning_bg, c.warning_text),
+            Callout::Caution => (Color { a: if self.look().dark { 0.18 } else { 0.10 }, ..c.danger }, c.danger),
+        };
+        let (pad_x, pad_y) = (SPACE_5, SPACE_4);
+        // The box goes under the text, so push it first and fix its height.
+        let quad = self.items.len();
+        self.items.push(Item::Quad {
+            rect: Rectangle::new(Point::new(x, y), Size::ZERO),
+            color: fill,
+            border: Border { radius: RADIUS_LG.into(), ..Border::default() },
+        });
+        let eyebrow = scaled(typography::EYEBROW, z);
+        let rs = RunStyle { base: eyebrow, font: self.look().font(&eyebrow), color: tone, uppercase: true };
+        let mut runs = self.runs(&[], &rs);
+        self.push_text(&mut runs, kind.title(), SpanStyle::default(), at..at, false, &rs, None);
+        let (_, title_h) = self.paragraph(runs, &rs, x + pad_x, y + pad_y, width - 2.0 * pad_x, false);
+        let body_y = y + pad_y + title_h + SPACE_2;
+        let body_h = self.children(children, x + pad_x, body_y, width - 2.0 * pad_x, c.text, SPACE_4);
+        let h = body_y - y + body_h + pad_y;
+        if let Item::Quad { rect, .. } = &mut self.items[quad] {
+            *rect = Rectangle::new(Point::new(x, y), Size::new(width, h));
+        }
+        h
     }
 
     /// Footnote bodies use the `ui` size.

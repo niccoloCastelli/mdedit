@@ -4,10 +4,12 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use mdedit_core::parse::markdown_options;
-use pulldown_cmark::{Alignment, BrokenLink, CodeBlockKind, CowStr, Event, LinkType, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Alignment, BlockQuoteKind, BrokenLink, CodeBlockKind, CowStr, Event, LinkType, Options, Parser, Tag, TagEnd,
+};
 
 use crate::refs::{LinkResolver, normalize_label};
-use crate::{Align, Inline, LayoutNode, ListItem, Segment, SpanStyle, TableCell, TableRow};
+use crate::{Align, Callout, Inline, LayoutNode, ListItem, Segment, SpanStyle, TableCell, TableRow};
 
 /// Lay out one block's text. `base` is the document offset of `text`,
 /// `source` the block's range; definitions come from `links`.
@@ -53,8 +55,10 @@ pub(crate) fn convert_all(text: &str, base: usize, links: Option<&dyn LinkResolv
         let def = links?.link_ref(&link.reference)?;
         Some((CowStr::from(def.dest), CowStr::from(def.title)))
     };
-    let parser = Parser::new_with_broken_link_callback(text, markdown_options(), Some(callback));
-    let mut b = Builder { text, base, stack: Vec::new(), out: Vec::new(), style: Styles::default() };
+    // GFM adds the `> [!NOTE]` alerts; the block index doesn't need them.
+    let options = markdown_options() | Options::ENABLE_GFM;
+    let parser = Parser::new_with_broken_link_callback(text, options, Some(callback));
+    let mut b = Builder { text, base, links, stack: Vec::new(), out: Vec::new(), style: Styles::default() };
     for (event, range) in parser.into_offset_iter() {
         b.event(event, base + range.start..base + range.end);
     }
@@ -140,7 +144,7 @@ enum Kind {
         classes: Vec<String>,
         attrs: Vec<(String, Option<String>)>,
     },
-    BlockQuote,
+    BlockQuote(Option<Callout>),
     List {
         start: Option<u64>,
         loose: bool,
@@ -223,6 +227,7 @@ impl Frame {
 struct Builder<'t> {
     text: &'t str,
     base: usize,
+    links: Option<&'t dyn LinkResolver>,
     stack: Vec<Frame>,
     out: Vec<LayoutNode>,
     style: Styles,
@@ -275,7 +280,8 @@ impl Builder<'_> {
             }
             Event::InlineHtml(html) => self.inline_html(html, range),
             Event::FootnoteReference(label) => {
-                self.push_inline(Inline::FootnoteRef { label: label.into_string(), source: range })
+                let number = self.links.and_then(|l| l.footnote_number(&label));
+                self.push_inline(Inline::FootnoteRef { label: label.into_string(), number, source: range })
             }
             Event::SoftBreak => self.push_inline(Inline::SoftBreak { source: range }),
             Event::HardBreak => self.push_inline(Inline::HardBreak { source: range }),
@@ -334,7 +340,13 @@ impl Builder<'_> {
                 classes: classes.into_iter().map(CowStr::into_string).collect(),
                 attrs: attrs.into_iter().map(|(k, v)| (k.into_string(), v.map(CowStr::into_string))).collect(),
             },
-            Tag::BlockQuote(_) => Kind::BlockQuote,
+            Tag::BlockQuote(kind) => Kind::BlockQuote(kind.map(|k| match k {
+                BlockQuoteKind::Note => Callout::Note,
+                BlockQuoteKind::Tip => Callout::Tip,
+                BlockQuoteKind::Important => Callout::Important,
+                BlockQuoteKind::Warning => Callout::Warning,
+                BlockQuoteKind::Caution => Callout::Caution,
+            })),
             Tag::CodeBlock(CodeBlockKind::Indented) => Kind::CodeBlock { info: String::new() },
             Tag::CodeBlock(CodeBlockKind::Fenced(info)) => Kind::CodeBlock { info: info.into_string() },
             Tag::HtmlBlock => Kind::HtmlBlock,
@@ -392,9 +404,9 @@ impl Builder<'_> {
                 self.reset_html_styles();
                 LayoutNode::Heading { level, inlines: f.inlines, id, classes, attrs, source }
             }
-            Kind::BlockQuote => {
+            Kind::BlockQuote(callout) => {
                 f.flush_inlines();
-                LayoutNode::BlockQuote { children: f.children, source }
+                LayoutNode::BlockQuote { callout, children: f.children, source }
             }
             Kind::List { start, loose } => LayoutNode::List { start, tight: !loose, items: f.items, source },
             Kind::Item => {
@@ -437,7 +449,8 @@ impl Builder<'_> {
             }
             Kind::FootnoteDefinition { label } => {
                 f.flush_inlines();
-                LayoutNode::FootnoteDefinition { label, children: f.children, source }
+                let number = self.links.and_then(|l| l.footnote_number(&label));
+                LayoutNode::FootnoteDefinition { label, number, children: f.children, source }
             }
             Kind::Link { url, title } => {
                 return self.push_inline(Inline::Link { url, title, children: f.inlines, source: f.source });

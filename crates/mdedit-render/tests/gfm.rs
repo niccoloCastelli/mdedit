@@ -4,7 +4,8 @@
 use mdedit_core::parse::BlockIndex;
 use mdedit_core::{RopeBuffer, TextBuffer};
 use mdedit_render::{
-    Align, IndexRefs, Inline, LayoutContext, LayoutNode, RefTable, SpanStyle, html, layout_block, layout_block_with,
+    Align, Callout, IndexRefs, Inline, LayoutContext, LayoutNode, RefTable, SpanStyle, html, layout_block,
+    layout_block_with, layout_document,
 };
 
 fn layout(md: &str) -> (RopeBuffer, Vec<LayoutNode>) {
@@ -117,4 +118,45 @@ fn ref_table_matches_index_refs() {
     assert_eq!(a.link_ref("a"), b.link_ref("a"));
     assert_eq!(a.link_ref("a").unwrap().dest, "/x");
     assert!(a.has_footnote("f") && b.has_footnote("F"));
+}
+
+#[test]
+fn footnotes_are_numbered_in_definition_order() {
+    let md = "One[^b] two[^a] again[^b].
+
+[^a]: First.
+
+[^b]: Second.
+";
+    let buf = RopeBuffer::from_text(md);
+    let index = BlockIndex::parse(&buf);
+    let refs = IndexRefs::new(&index, &buf);
+    let ctx = LayoutContext { links: Some(&refs), renderers: &[] };
+    let nodes: Vec<_> = index.blocks().iter().map(|b| layout_block_with(&b, &buf, &ctx).node).collect();
+    let LayoutNode::Paragraph { inlines, .. } = &nodes[0] else { panic!() };
+    let numbers: Vec<_> = inlines
+        .iter()
+        .filter_map(|i| match i {
+            Inline::FootnoteRef { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(numbers, [Some(2), Some(1), Some(2)]);
+    assert!(matches!(&nodes[1], LayoutNode::FootnoteDefinition { number: Some(1), .. }));
+    assert!(matches!(&nodes[2], LayoutNode::FootnoteDefinition { number: Some(2), .. }));
+    // The whole-document path numbers the same way.
+    let doc = layout_document(md);
+    assert!(matches!(&doc[2], LayoutNode::FootnoteDefinition { number: Some(2), .. }));
+}
+
+#[test]
+fn github_alerts_become_callouts() {
+    let (_, nodes) = layout("> [!WARNING]\n> Mind the gap.\n\n> plain\n");
+    let LayoutNode::BlockQuote { callout: Some(Callout::Warning), children, .. } = &nodes[0] else {
+        panic!("{nodes:?}")
+    };
+    let LayoutNode::Paragraph { inlines, .. } = &children[0] else { panic!() };
+    assert_eq!(texts(inlines)[0].0, "Mind the gap.");
+    assert!(matches!(&nodes[1], LayoutNode::BlockQuote { callout: None, .. }));
+    assert!(html::to_html(&nodes).contains("<blockquote class=\"markdown-alert-warning\">"));
 }
