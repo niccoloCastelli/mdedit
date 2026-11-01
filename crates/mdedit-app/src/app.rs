@@ -155,6 +155,7 @@ pub struct App {
     keymap_file: Overrides,
     pub keymap: Keymap,
     system_dark: bool,
+    themes: mdedit_theme::ThemeSet,
     pub theme: Theme,
     pub tabs: Vec<Tab>,
     pub active: usize,
@@ -221,6 +222,7 @@ impl App {
             keymap_file,
             keymap,
             system_dark: false,
+            themes: mdedit_theme::ThemeSet::builtin(),
             theme: Theme::ember_light(),
             tabs: Vec::new(),
             active: 0,
@@ -242,6 +244,7 @@ impl App {
             stats: Vec::new(),
             stats_pending: Vec::new(),
         };
+        app.load_themes();
         app.apply_theme();
         for err in [settings_err, keymap_err].into_iter().flatten() {
             app.toast_error(err);
@@ -314,14 +317,18 @@ impl App {
     }
 
     fn apply_theme(&mut self) {
-        let name =
-            if self.is_dark() { &self.settings.appearance.dark_theme } else { &self.settings.appearance.light_theme };
-        let mut theme = match name.as_str() {
-            "ember-dark" => Theme::ember_dark(),
-            "ember-light" => Theme::ember_light(),
-            _ if self.is_dark() => Theme::ember_dark(),
-            _ => Theme::ember_light(),
+        let a = &self.settings.appearance;
+        let wanted = mdedit_theme::ThemeSettings {
+            appearance: if self.is_dark() { mdedit_theme::Appearance::Dark } else { mdedit_theme::Appearance::Light },
+            light_theme: a.light_theme.clone(),
+            dark_theme: a.dark_theme.clone(),
         };
+        let id = if self.is_dark() { &a.dark_theme } else { &a.light_theme };
+        if let Err(e) = self.themes.get(id) {
+            let msg = e.to_string();
+            self.toast_error(msg);
+        }
+        let mut theme = self.themes.select(&wanted, None);
         let f = &self.settings.fonts;
         for (setting, slot) in
             [(&f.ui, &mut theme.fonts.ui), (&f.prose, &mut theme.fonts.prose), (&f.mono, &mut theme.fonts.mono)]
@@ -331,6 +338,16 @@ impl App {
             }
         }
         self.theme = theme;
+    }
+
+    /// Built-in themes plus `themes/*.toml` in the config dir.
+    fn load_themes(&mut self) {
+        let mut set = mdedit_theme::ThemeSet::builtin();
+        let errors = set.load_dir(&self.paths.config_dir.join("themes"));
+        self.themes = set;
+        for e in errors {
+            self.toast_error(e.to_string());
+        }
     }
 
     /// Push editor settings into every tab's widget state.
@@ -835,6 +852,7 @@ impl App {
         for w in self.keymap.warnings.clone() {
             self.toast_error(w);
         }
+        self.load_themes();
         self.apply_theme();
         self.apply_editor_settings();
         self.toast("Settings applied.");

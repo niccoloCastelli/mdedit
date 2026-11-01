@@ -77,6 +77,11 @@ impl BlockIndex {
         self.reparse_all(buf);
     }
 
+    /// Block `i` in document order.
+    pub fn get(&self, i: usize) -> Option<Block> {
+        self.blocks.get(i).cloned()
+    }
+
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
     }
