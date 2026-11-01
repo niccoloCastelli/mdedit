@@ -2,8 +2,8 @@
 //! move can rewrite paths without touching anything else (SPEC 6.4).
 //!
 //! Covers inline links and images (`[t](dest)`, `![a](dest "title")`) and
-//! reference definitions (`[ref]: dest`). Autolinks and raw HTML (`<img src>`)
-//! are not rewritten.
+//! reference definitions (`[ref]: dest`), and the `src` of `<img>` tags in
+//! raw HTML (blocks and inline). Autolinks are not rewritten.
 
 use std::ops::Range;
 
@@ -17,6 +17,8 @@ pub struct LinkDest {
     /// Written as `<dest>`.
     pub angle: bool,
     pub is_image: bool,
+    /// An HTML attribute value (`<img src>`): quotes must be encoded too.
+    pub html: bool,
 }
 
 struct Open {
@@ -30,6 +32,7 @@ struct Open {
 pub fn find_link_dests(text: &str) -> Vec<LinkDest> {
     let mut out = Vec::new();
     let mut stack: Vec<Open> = Vec::new();
+    let mut html_block: Option<usize> = None;
     let mut iter = Parser::new_ext(text, markdown_options()).into_offset_iter();
     for (event, range) in iter.by_ref() {
         match event {
@@ -48,9 +51,22 @@ pub fn find_link_dests(text: &str) -> Vec<LinkDest> {
                 {
                     let at = open.text_end + rel + 2;
                     if let Some((r, angle)) = parse_dest(text, at, range.end) {
-                        out.push(LinkDest { range: r, angle, is_image: open.is_image });
+                        out.push(LinkDest { range: r, angle, is_image: open.is_image, html: false });
                     }
                 }
+                if let Some(top) = stack.last_mut() {
+                    top.text_end = top.text_end.max(range.end);
+                }
+            }
+            // A block is scanned whole: a tag may span lines.
+            Event::Start(Tag::HtmlBlock) => html_block = Some(range.start),
+            Event::End(TagEnd::HtmlBlock) => {
+                if let Some(start) = html_block.take() {
+                    out.extend(html_img_srcs(text, start..range.end));
+                }
+            }
+            Event::InlineHtml(_) => {
+                out.extend(html_img_srcs(text, range.clone()));
                 if let Some(top) = stack.last_mut() {
                     top.text_end = top.text_end.max(range.end);
                 }
@@ -66,11 +82,75 @@ pub fn find_link_dests(text: &str) -> Vec<LinkDest> {
         if let Some(colon) = label_end(text, def.span.clone())
             && let Some((r, angle)) = parse_dest(text, colon + 1, def.span.end)
         {
-            out.push(LinkDest { range: r, angle, is_image: false });
+            out.push(LinkDest { range: r, angle, is_image: false, html: false });
         }
     }
     out.sort_by_key(|d| d.range.start);
     out.dedup();
+    out
+}
+
+/// `src` values of the `<img>` tags in `text[range]`.
+fn html_img_srcs(text: &str, range: Range<usize>) -> Vec<LinkDest> {
+    let bytes = text.as_bytes();
+    let lower = text[range.clone()].to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find("<img") {
+        let mut i = range.start + from + rel + 4;
+        from += rel + 4;
+        if !bytes.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
+            continue; // `<imgx>`, or `<img>` with no attributes
+        }
+        // Walk the attributes up to the tag's `>`.
+        while i < range.end {
+            while i < range.end && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= range.end || bytes[i] == b'>' || bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'>') {
+                break;
+            }
+            let name_start = i;
+            while i < range.end && !bytes[i].is_ascii_whitespace() && !matches!(bytes[i], b'=' | b'>' | b'/') {
+                i += 1;
+            }
+            if i == name_start {
+                i += 1; // stray `/`
+                continue;
+            }
+            let name = &text[name_start..i];
+            let mut j = i;
+            while j < range.end && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j >= range.end || bytes[j] != b'=' {
+                continue; // attribute without a value
+            }
+            j += 1;
+            while j < range.end && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            let value = match bytes.get(j) {
+                Some(&q @ (b'"' | b'\'')) => {
+                    let Some(len) = text[j + 1..range.end].find(q as char) else { break };
+                    i = j + 1 + len + 1;
+                    j + 1..j + 1 + len
+                }
+                _ => {
+                    i = j;
+                    while i < range.end && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+                        i += 1;
+                    }
+                    // `src=x.png/>`: the slash closes the tag.
+                    let end = if i > j + 1 && bytes[i - 1] == b'/' && bytes.get(i) == Some(&b'>') { i - 1 } else { i };
+                    j..end
+                }
+            };
+            if name.eq_ignore_ascii_case("src") && !value.is_empty() {
+                out.push(LinkDest { range: value, angle: false, is_image: true, html: true });
+            }
+        }
+    }
     out
 }
 
@@ -222,6 +302,15 @@ mod tests {
         assert_eq!(dests(text), ["assets/x.png", "other.md#s", "code.md", "in.png", "out.md", "ref target.md"]);
         let d = find_link_dests(text);
         assert!(d[0].is_image && !d[1].is_image && d[5].angle);
+    }
+
+    #[test]
+    fn finds_img_src_in_raw_html() {
+        let text = "<p align=\"center\">\n  <img alt=\"x>y\"\n       SRC='assets/a b.png' width=200>\n</p>\n\n\
+                    Inline <img src=assets/c.png/> and <image src=\"no.png\"> <img data-src=\"no.png\" src=\"d.png\">.\n\n\
+                    `<img src=\"code.png\">`\n";
+        assert_eq!(dests(text), ["assets/a b.png", "assets/c.png", "d.png"]);
+        assert!(find_link_dests(text).iter().all(|d| d.html && d.is_image));
     }
 
     #[test]
