@@ -32,6 +32,7 @@ notify.workspace = true
 image.workspace = true
 jiff.workspace = true
 similar.workspace = true
+arboard.workspace = true
 
 [build-dependencies]
 winresource.workspace = true

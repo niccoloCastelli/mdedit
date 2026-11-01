@@ -72,6 +72,8 @@ gix = { version = "0.90", default-features = false, features = [
 git2 = { version = "0.21", default-features = false }
 # Line diffs for the history view (mdedit-app).
 similar = "2"
+# Reading pasted images (iced's clipboard is text only).
+arboard = { version = "3", default-features = false, features = ["image-data"] }
 keyring = "4"
 
 # Export

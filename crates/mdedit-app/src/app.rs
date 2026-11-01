@@ -25,6 +25,7 @@ use crate::settings::{AppearanceMode, Mode, Paths, Settings};
 use crate::tab::{DiskStamp, External, Handoff, Tab, TabId};
 use crate::watch;
 
+mod assets;
 pub mod project;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -495,6 +496,7 @@ impl App {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Message::Key { key, modifiers, captured: status == event::Status::Captured })
                 }
+                Event::Window(window::Event::FileDropped(path)) => Some(Message::Project(project::Msg::Dropped(path))),
                 _ => None,
             }),
             window::close_requests().map(|_| Message::CloseRequested),
@@ -949,6 +951,9 @@ impl App {
         if std::env::var_os("MDEDIT_DEBUG_KEYS").is_some() {
             eprintln!("key {key:?} {modifiers:?} captured={captured} -> {chord} {:?}", self.keymap.lookup(&chord));
         }
+        if let Some(task) = self.paste_image_key(&key, modifiers) {
+            return task;
+        }
         match self.keymap.lookup(&chord) {
             Some(id) => self.run(id),
             None => Task::none(),
@@ -963,6 +968,9 @@ impl App {
                 let Some(tab) = self.active_tab_mut() else { return Task::none() };
                 if !tab.editable() {
                     return Task::none();
+                }
+                if let core_cmd::DocCommand::Image { url: None } = cmd {
+                    return self.pick_image();
                 }
                 if let core_cmd::DocCommand::PasteTable { .. } = cmd {
                     let id = tab.id;
