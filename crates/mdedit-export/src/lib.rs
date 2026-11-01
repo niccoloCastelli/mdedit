@@ -2,21 +2,41 @@
 //!
 //! Input is the markdown source (parsed here with
 //! `mdedit_core::parse::markdown_options()`, a full parse is fine for
-//! export) plus a resolved [`Template`]. PDF: markdown → Typst markup →
-//! `typst` compiled through a minimal `World` (bundled fonts, project files
-//! for images) → `typst-pdf`. DOCX: `docx-rs` with named styles from the
-//! template TOML. Blocking; the app runs it on a worker.
+//! export) plus a resolved [`Template`]. Both outputs go through one
+//! document tree ([`ast`]) so they agree on structure. PDF: markdown →
+//! Typst markup → `typst` compiled through a minimal `World` (bundled
+//! fonts, project files for images) → `typst-pdf`. DOCX: `docx-rs` with
+//! named styles from the template TOML. Blocking; the app runs it on a
+//! worker.
 
+pub mod ast;
+mod docx;
+pub mod highlight;
+mod pdf;
 pub mod template;
+mod typst_markup;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
+pub use ast::ExportComment;
+pub use docx::DocxParts;
 pub use template::Template;
+pub use typst_markup::TypstFiles;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
     Pdf,
     Docx,
+}
+
+impl ExportFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            ExportFormat::Pdf => "pdf",
+            ExportFormat::Docx => "docx",
+        }
+    }
 }
 
 /// Per-export overrides from the export dialog.
@@ -26,6 +46,15 @@ pub struct ExportOptions {
     pub toc: Option<bool>,
     pub heading_numbers: Option<bool>,
     pub include_comments: bool,
+    /// Margins in mm: top, right, bottom, left.
+    pub margins_mm: Option<[f32; 4]>,
+    /// `{title}` when the document has no title heading (the app passes
+    /// the file name without extension).
+    pub title: Option<String>,
+    /// `{date}`; defaults to today as `YYYY-MM-DD`.
+    pub date: Option<String>,
+    /// Comments to include, as footnotes, when `include_comments` is set.
+    pub comments: Vec<ExportComment>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -36,8 +65,53 @@ pub enum ExportError {
     Template(String),
     #[error("typst: {0}")]
     Typst(String),
+    #[error("docx: {0}")]
+    Docx(String),
     #[error("not implemented yet: {0}")]
     Unimplemented(&'static str),
+}
+
+/// The template with the dialog's overrides applied, plus values the
+/// writers need.
+pub(crate) struct Settings {
+    pub template: Template,
+    pub include_comments: bool,
+    /// Fallback for `{title}`.
+    pub title: String,
+    pub date: String,
+}
+
+impl Settings {
+    fn new(template: &Template, options: &ExportOptions) -> Result<Self, ExportError> {
+        let mut template = template.clone();
+        if let Some(size) = &options.page_size {
+            if template::page_size_mm(size).is_none() {
+                return Err(ExportError::Template(format!("unknown page size {size:?}")));
+            }
+            template.page_size = size.clone();
+        }
+        if let Some(toc) = options.toc {
+            template.toc = toc;
+        }
+        if let Some(numbers) = options.heading_numbers {
+            template.heading_numbers = numbers;
+        }
+        if let Some(margins) = options.margins_mm {
+            template.margins_mm = margins;
+        }
+        let date = options.date.clone().unwrap_or_else(|| jiff::Zoned::now().date().to_string());
+        Ok(Settings {
+            template,
+            include_comments: options.include_comments,
+            title: options.title.clone().unwrap_or_default(),
+            date,
+        })
+    }
+
+    fn doc(&self, markdown: &str, options: &ExportOptions) -> ast::Doc {
+        let comments = if self.include_comments { options.comments.as_slice() } else { &[] };
+        ast::Doc::parse(markdown, comments)
+    }
 }
 
 /// Render `markdown` to bytes. `base_dir` resolves relative image paths.
@@ -48,9 +122,164 @@ pub fn export(
     options: &ExportOptions,
     format: ExportFormat,
 ) -> Result<Vec<u8>, ExportError> {
-    let _ = (markdown, base_dir, template, options);
-    Err(ExportError::Unimplemented(match format {
-        ExportFormat::Pdf => "pdf export",
-        ExportFormat::Docx => "docx export",
-    }))
+    let settings = Settings::new(template, options)?;
+    let doc = settings.doc(markdown, options);
+    match format {
+        ExportFormat::Pdf => {
+            let mut images = ImageResolver::new(base_dir);
+            let files = typst_markup::convert(&doc, &settings, &mut |url| images.resolve(url));
+            let fonts = template_fonts(template);
+            let today = jiff::civil::Date::strptime("%Y-%m-%d", &settings.date)
+                .ok()
+                .map(|d| (i32::from(d.year()), d.month() as u8, d.day() as u8));
+            let world = pdf::ExportWorld::new(&files, template.typst(), &images.files, &fonts, today);
+            world.compile_pdf()
+        }
+        ExportFormat::Docx => docx::pack(&doc, &settings, &mut |url| read_image(base_dir, url)),
+    }
+}
+
+/// [`export`] written to `out` through a temporary file and a rename, so
+/// a failed export never leaves a truncated file behind.
+pub fn export_to_file(
+    markdown: &str,
+    base_dir: &Path,
+    template: &Template,
+    options: &ExportOptions,
+    format: ExportFormat,
+    out: &Path,
+) -> Result<(), ExportError> {
+    let bytes = export(markdown, base_dir, template, options, format)?;
+    let tmp = out.with_extension(format!("{}.part", format.extension()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, out)?;
+    Ok(())
+}
+
+/// The generated Typst sources (for golden tests, and for template authors
+/// debugging a `template.typ`). Images are referenced as `/__img/<url>`
+/// without checking that they exist.
+pub fn typst_source(markdown: &str, template: &Template, options: &ExportOptions) -> Result<TypstFiles, ExportError> {
+    let settings = Settings::new(template, options)?;
+    let doc = settings.doc(markdown, options);
+    Ok(typst_markup::convert(&doc, &settings, &mut |url| Some(format!("/__img/{url}"))))
+}
+
+/// The main XML parts of the DOCX (for golden tests). `base_dir` resolves
+/// images.
+pub fn docx_parts(
+    markdown: &str,
+    base_dir: &Path,
+    template: &Template,
+    options: &ExportOptions,
+) -> Result<DocxParts, ExportError> {
+    let settings = Settings::new(template, options)?;
+    let doc = settings.doc(markdown, options);
+    Ok(docx::parts(&doc, &settings, &mut |url| read_image(base_dir, url)))
+}
+
+/// A local image path from a markdown URL, or `None` for remote URLs.
+fn local_image_path(base_dir: &Path, url: &str) -> Option<PathBuf> {
+    let url = url.trim();
+    if url.is_empty() || url.contains("://") || url.starts_with("data:") {
+        return None;
+    }
+    let url = url.split(['?', '#']).next().unwrap_or(url);
+    let decoded = percent_decode(url);
+    let path = Path::new(&decoded);
+    Some(if path.is_absolute() { path.to_path_buf() } else { base_dir.join(path) })
+}
+
+fn read_image(base_dir: &Path, url: &str) -> Option<Vec<u8>> {
+    std::fs::read(local_image_path(base_dir, url)?).ok()
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(byte) = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(byte);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Maps image URLs to virtual paths in the Typst world.
+struct ImageResolver<'a> {
+    base_dir: &'a Path,
+    by_url: HashMap<String, Option<String>>,
+    files: Vec<(String, PathBuf)>,
+}
+
+impl<'a> ImageResolver<'a> {
+    fn new(base_dir: &'a Path) -> Self {
+        ImageResolver { base_dir, by_url: HashMap::new(), files: Vec::new() }
+    }
+
+    fn resolve(&mut self, url: &str) -> Option<String> {
+        if let Some(known) = self.by_url.get(url) {
+            return known.clone();
+        }
+        let vpath = local_image_path(self.base_dir, url).filter(|p| p.is_file()).map(|path| {
+            let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            let vpath = format!("/__img/{}.{ext}", self.files.len());
+            self.files.push((vpath.clone(), path));
+            vpath
+        });
+        self.by_url.insert(url.to_string(), vpath.clone());
+        vpath
+    }
+}
+
+/// Font files in the template's `fonts/` directory.
+fn template_fonts(template: &Template) -> Vec<PathBuf> {
+    let Some(dir) = &template.dir else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(dir.join("fonts")) else { return Vec::new() };
+    let mut fonts: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|e| matches!(e.to_string_lossy().to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc"))
+        })
+        .collect();
+    fonts.sort();
+    fonts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_paths() {
+        let base = Path::new("/doc");
+        assert_eq!(local_image_path(base, "img/a%20b.png?x=1"), Some(PathBuf::from("/doc/img/a b.png")));
+        assert_eq!(local_image_path(base, "https://x/y.png"), None);
+        assert_eq!(local_image_path(base, "/abs.png"), Some(PathBuf::from("/abs.png")));
+    }
+
+    #[test]
+    fn options_override_the_template() {
+        let options = ExportOptions {
+            page_size: Some("us-letter".into()),
+            toc: Some(true),
+            margins_mm: Some([1.0, 2.0, 3.0, 4.0]),
+            ..Default::default()
+        };
+        let s = Settings::new(&Template::default(), &options).unwrap();
+        assert_eq!(s.template.page_size, "us-letter");
+        assert!(s.template.toc);
+        assert_eq!(s.template.margins_mm, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(s.date.len(), 10);
+        let bad = ExportOptions { page_size: Some("napkin".into()), ..Default::default() };
+        assert!(Settings::new(&Template::default(), &bad).is_err());
+    }
 }

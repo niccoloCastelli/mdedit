@@ -9,7 +9,7 @@ use crate::edit::{AppliedEdit, Edit, EditOrigin, TxnId};
 use crate::edit_log::EditLog;
 use crate::io::{FileFormat, IoError};
 use crate::mapped::{MappedBuffer, Remap};
-use crate::parse::BlockIndex;
+use crate::parse::{BlockIndex, ParseJob, ParseResult};
 use crate::selection::Selection;
 use crate::undo::UndoStack;
 
@@ -74,6 +74,27 @@ impl Document {
 
     pub fn blocks(&self) -> Option<&BlockIndex> {
         self.blocks.as_ref()
+    }
+
+    /// A large reparse to run on a worker (`spawn_blocking`), if the block
+    /// index has one outstanding; hand its result to
+    /// [`Self::finish_parse`]. Until then the index keeps the old blocks,
+    /// shifted (ARCHITECTURE 3.2).
+    pub fn take_parse_job(&mut self) -> Option<ParseJob> {
+        self.blocks.as_mut()?.take_parse_job(self.buffer.as_ref())
+    }
+
+    /// Splice in a finished parse job; returns whether it was still current.
+    pub fn finish_parse(&mut self, result: ParseResult) -> bool {
+        let buffer = self.buffer.as_ref();
+        self.blocks.as_mut().is_some_and(|b| b.finish_parse(result, buffer))
+    }
+
+    /// Finish any outstanding reparse on the calling thread.
+    pub fn flush_parse(&mut self) {
+        if let Some(blocks) = &mut self.blocks {
+            blocks.flush(self.buffer.as_ref());
+        }
     }
 
     pub fn log(&self) -> &EditLog {

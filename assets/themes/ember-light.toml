@@ -1,0 +1,71 @@
+# Ember Light, the default light theme (DESIGN_SYSTEM 2.2). Compiled into
+# the binary; user themes can `extends = "ember-light"`.
+name = "Ember Light"
+kind = "light"
+shadow = "#1B1A191A"
+
+[color]
+bg = "#FFFFFF"
+bg-subtle = "#F5F3F1"
+surface = "#FFFFFF"
+surface-raised = "#FBFAFA"
+border = "#E3DFDA"
+border-strong = "#C6C5C3"
+text = "#1B1A19"
+text-secondary = "#5F5B57"
+text-muted = "#716D68"
+accent = "#D9542B"
+accent-text = "#B8431F"
+accent-soft = "#FBE9E2"
+on-accent = "#FFFFFF"
+warning-bg = "#FBF0D9"
+warning-text = "#8A5A00"
+danger = "#B42335"
+success = "#3F7D4E"
+info = "#2F6FAE"
+comment-highlight = "warning-bg"
+
+[font]
+ui = "Hanken Grotesk"
+prose = "Hanken Grotesk"
+mono = "JetBrains Mono"
+
+# Markdown source styling (DESIGN_SYSTEM 2.4); keys are `syntax-<key>` tokens.
+[syntax]
+marker = "text-muted"
+heading = "text"
+emphasis = "text"
+link = "accent-text"
+url = "text-muted"
+code = "text-secondary"
+code-bg = "bg-subtle"
+html = "info"
+math = "info"
+
+# Fenced code highlighting: syntect scope selector = colour, or a table with
+# `color`, `bold`, `italic`. Unlisted scopes use `syntax-code`.
+[code]
+"comment" = { color = "text-muted", italic = true }
+"string" = "#376E44"
+"markup.inserted" = "#376E44"
+"constant.numeric" = "info"
+"constant.language" = "info"
+"constant.character" = "info"
+"support.constant" = "info"
+"keyword" = "accent-text"
+"storage" = "accent-text"
+"entity.name.tag" = "accent-text"
+"keyword.operator" = "text-secondary"
+"entity.name.function" = "#7A4FB0"
+"support.function" = "#7A4FB0"
+"entity.name.type" = "warning-text"
+"entity.name.class" = "warning-text"
+"support.type" = "warning-text"
+"support.class" = "warning-text"
+"entity.other.attribute-name" = "warning-text"
+"variable.parameter" = "text"
+"markup.deleted" = "danger"
+"invalid" = "danger"
+"markup.heading" = { color = "text", bold = true }
+"markup.bold" = { color = "text", bold = true }
+"markup.italic" = { color = "text", italic = true }
