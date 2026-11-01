@@ -681,6 +681,8 @@ impl App {
 
         if self.sidebar.visible
             && self.sidebar.tab == SidebarTab::Search
+            // Large files need the streamed background search (M2).
+            && !tab.doc.is_large()
             && self.search.for_version != Some((id, version))
         {
             let query = SearchQuery { pattern: self.search.query.clone(), ..Default::default() };
@@ -1065,6 +1067,16 @@ impl App {
 
     fn start_save(&mut self, id: TabId, to: Option<PathBuf>) -> Task<Message> {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
+        if tab.doc.mapped().is_some() {
+            // A mapped buffer must be remapped onto the file it wrote, so it
+            // saves through `io::save` for now (blocking; background save of
+            // large files comes with large-file mode in the app).
+            let target = to.clone().or_else(|| tab.doc.path.clone());
+            let result = mdedit_core::io::save(&mut tab.doc, to.as_deref()).map_err(|e| e.to_string());
+            let point = tab.doc.save_point();
+            let path = target.unwrap_or_default();
+            return self.on_saved(id, path, point, result);
+        }
         match tab.begin_save(to.as_deref()) {
             Ok(job) => {
                 let (path, point) = (job.path.clone(), job.point);

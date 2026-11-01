@@ -1,0 +1,32 @@
+# Plain: the defaults, spelled out. Copy this file to
+# .mdedit/templates/<name>/template.toml to start a new template.
+name = "Plain"
+style = "plain"            # guide | report | plain
+page_size = "a4"           # a3 a4 a5 b5 us-letter us-legal
+margins_mm = [25.0, 20.0, 25.0, 20.0]   # top right bottom left
+font_body = "Hanken Grotesk"
+font_heading = ""          # empty: same as font_body
+font_mono = "JetBrains Mono"
+base_size_pt = 11.0
+line_height = 1.5
+accent = "#D9542B"
+heading_numbers = false
+number_style = "decimal"   # decimal (1.2) | guide (01)
+title_page = false
+toc = false
+eyebrow = ""
+lead = false
+header = ""                # "left | centre | right"; {title} {page} {pages} {date}
+footer = "{page}"
+code_theme = "ember-light"
+
+[colors]
+text = "#1B1A19"
+text_secondary = "#5F5B57"
+text_muted = "#716D68"
+accent_text = "#B8431F"
+accent_soft = "#FBE9E2"
+border = "#E3DFDA"
+bg_subtle = "#F5F3F1"
+warning_bg = "#FBF0D9"
+warning_text = "#8A5A00"
