@@ -72,6 +72,7 @@ impl App {
                 Action::Select(sel) => self.state.selection = sel,
                 Action::Scroll(y) => self.state.scroll_y = y,
                 Action::OpenLink(url) => eprintln!("open link: {url}"),
+                Action::SelectionRect(_) => {}
             },
             Message::Editor(action) => match action {
                 mdedit_editor::Action::Edit(edit) => {
@@ -86,6 +87,7 @@ impl App {
                 mdedit_editor::Action::Paste => return clipboard::read().map(Message::Pasted),
                 mdedit_editor::Action::Undo => return Task::done(Message::Undo),
                 mdedit_editor::Action::Redo => return Task::done(Message::Redo),
+                mdedit_editor::Action::SelectionRect(_) => {}
             },
             Message::Pasted(Some(t)) => {
                 let range = self.editor.selection.range();
