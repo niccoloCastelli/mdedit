@@ -257,7 +257,8 @@ impl HeightMap {
         let n = self.chunks[c].heights.len();
         if n > CHUNK_MAX {
             let chunk = self.chunks.remove(c);
-            let parts: Vec<Chunk> = chunk.heights.chunks(CHUNK_MAX / 2).map(|s| Chunk::from_heights(s.to_vec())).collect();
+            let parts: Vec<Chunk> =
+                chunk.heights.chunks(CHUNK_MAX / 2).map(|s| Chunk::from_heights(s.to_vec())).collect();
             self.chunks.splice(c..c, parts);
         } else if self.chunks.len() > 1 {
             let other = if c + 1 < self.chunks.len() { c + 1 } else { c - 1 };
@@ -266,7 +267,8 @@ impl HeightMap {
             let mut heights = std::mem::take(&mut self.chunks[a].heights);
             heights.extend(second.heights);
             if heights.len() > CHUNK_MAX {
-                let parts: Vec<Chunk> = heights.chunks(CHUNK_MAX / 2).map(|s| Chunk::from_heights(s.to_vec())).collect();
+                let parts: Vec<Chunk> =
+                    heights.chunks(CHUNK_MAX / 2).map(|s| Chunk::from_heights(s.to_vec())).collect();
                 self.chunks.splice(a..=a, parts);
             } else {
                 self.chunks[a] = Chunk::from_heights(heights);

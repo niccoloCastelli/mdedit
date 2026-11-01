@@ -68,11 +68,7 @@ pub(crate) fn prev_word(buf: &dyn TextBuffer, pos: usize) -> usize {
         return prev_grapheme(buf, pos);
     }
     let text = buf.line(line);
-    let start = text[..col]
-        .split_word_bound_indices()
-        .filter(|(_, w)| is_word(w))
-        .last()
-        .map_or(0, |(i, _)| i);
+    let start = text[..col].split_word_bound_indices().rfind(|(_, w)| is_word(w)).map_or(0, |(i, _)| i);
     buf.line_to_byte(line) + start
 }
 
@@ -84,10 +80,8 @@ pub(crate) fn next_word(buf: &dyn TextBuffer, pos: usize) -> usize {
     if col >= text.len() {
         return next_grapheme(buf, pos);
     }
-    let end = text[col..]
-        .split_word_bound_indices()
-        .find(|(_, w)| is_word(w))
-        .map_or(text.len() - col, |(i, w)| i + w.len());
+    let end =
+        text[col..].split_word_bound_indices().find(|(_, w)| is_word(w)).map_or(text.len() - col, |(i, w)| i + w.len());
     buf.line_to_byte(line) + col + end
 }
 

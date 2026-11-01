@@ -111,12 +111,7 @@ impl Geom {
             text_x = left_min;
             text_w = text_w.min((size.width - left_min - pad).max(48.0));
         }
-        Self {
-            height: size.height,
-            text_x,
-            text_w,
-            numbers_right: gutter.map(|_| text_x - space::SPACE_4),
-        }
+        Self { height: size.height, text_x, text_w, numbers_right: gutter.map(|_| text_x - space::SPACE_4) }
     }
 }
 
@@ -553,11 +548,11 @@ impl State {
         let first = self.visible.first()?;
         let last = self.visible.last()?;
         let y = p.y - bounds.y;
-        let v = self
-            .visible
-            .iter()
-            .find(|v| y >= v.y && y < v.y + v.shaped.height)
-            .unwrap_or(if y < first.y { first } else { last });
+        let v = self.visible.iter().find(|v| y >= v.y && y < v.y + v.shaped.height).unwrap_or(if y < first.y {
+            first
+        } else {
+            last
+        });
         let x = p.x - bounds.x - self.geom.text_x;
         let local_y = (y - v.y).clamp(0.0, v.shaped.height - 0.5);
         Some(v.start + geometry::hit(&v.shaped.paragraph, x, local_y, v.len))
@@ -714,7 +709,11 @@ impl<Message> Editor<'_, Message> {
         let head = sel.head;
         let shift = modifiers.shift();
         let to = |pos: usize| {
-            vec![Action::Select(if shift { Selection { anchor: sel.anchor, head: pos } } else { Selection::cursor(pos) })]
+            vec![Action::Select(if shift {
+                Selection { anchor: sel.anchor, head: pos }
+            } else {
+                Selection::cursor(pos)
+            })]
         };
 
         if modifiers.command() && !modifiers.alt() {
@@ -1278,8 +1277,10 @@ mod tests {
             if i % 10 == 0 {
                 text.push_str(&format!("## Heading {i}\n"));
             } else {
-                text.push_str("Some *prose* with `code` and a [link](https://example.com) that is long enough to wrap \
-                               around once or twice in a 720 px column of body text.\n");
+                text.push_str(
+                    "Some *prose* with `code` and a [link](https://example.com) that is long enough to wrap \
+                               around once or twice in a 720 px column of body text.\n",
+                );
             }
         }
         Document::with_buffer(Box::new(RopeBuffer::from_text(&text)), parse)
@@ -1287,8 +1288,8 @@ mod tests {
 
     fn laid_out(doc: &Document, state: &EditorState) -> State {
         let look = Look::new(&Theme::ember_light(), state.monospace);
-        let mut st = State::default();
-        st.geom = Geom::compute(Size::new(1000.0, 800.0), state, &look, motion::line_count(doc.buffer()));
+        let geom = Geom::compute(Size::new(1000.0, 800.0), state, &look, motion::line_count(doc.buffer()));
+        let mut st = State { geom, ..State::default() };
         st.sync(doc, &look);
         st.prepare(doc, &look);
         st

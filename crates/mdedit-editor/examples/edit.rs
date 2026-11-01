@@ -64,8 +64,24 @@ fn options() -> Options {
 /// varied length (so lines wrap), lists, code blocks and inline styling.
 pub fn generate(mb: usize) -> String {
     let words = [
-        "markdown", "editor", "rope", "fast", "*light*", "`code`", "**bold**", "[link](https://example.com)", "wrap",
-        "line", "the", "a", "of", "layout", "virtual", "scroll", "anchor", "glyph",
+        "markdown",
+        "editor",
+        "rope",
+        "fast",
+        "*light*",
+        "`code`",
+        "**bold**",
+        "[link](https://example.com)",
+        "wrap",
+        "line",
+        "the",
+        "a",
+        "of",
+        "layout",
+        "virtual",
+        "scroll",
+        "anchor",
+        "glyph",
     ];
     let mut out = String::with_capacity(mb * 1_050_000);
     let mut seed = 0x9E3779B97F4A7C15u64;
@@ -122,11 +138,16 @@ impl App {
         let (text, title) = match (&o.path, o.generate_mb) {
             (_, Some(mb)) => (generate(mb), format!("generated {mb} MB")),
             (Some(p), None) => (std::fs::read_to_string(p).expect("read file"), p.clone()),
-            (None, None) => (generate(1) , "generated 1 MB".into()),
+            (None, None) => (generate(1), "generated 1 MB".into()),
         };
         let started = std::time::Instant::now();
         let doc = Document::with_buffer(Box::new(RopeBuffer::from_text(&text)), o.parse);
-        eprintln!("document: {} bytes, {:?} lines, built in {:.1?}", text.len(), doc.buffer().len_lines(), started.elapsed());
+        eprintln!(
+            "document: {} bytes, {:?} lines, built in {:.1?}",
+            text.len(),
+            doc.buffer().len_lines(),
+            started.elapsed()
+        );
         let state = EditorState {
             monospace: o.mono,
             line_numbers: o.numbers,

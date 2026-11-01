@@ -123,7 +123,7 @@ pub(crate) fn selection_rects(
     for (i, run) in runs.iter().enumerate() {
         let (rs, re) = run_range(run);
         let mut rect = if start < re && end > rs || (start == end && rs == re) {
-            run.highlight(Cursor::new(run.line_i, start), Cursor::new(run.line_i, end)).map(|(x, w)| (x, w))
+            run.highlight(Cursor::new(run.line_i, start), Cursor::new(run.line_i, end))
         } else {
             None
         };
