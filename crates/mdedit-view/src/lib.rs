@@ -58,6 +58,9 @@ pub struct ViewState {
     pub full_width: bool,
     /// Text zoom (Ctrl +/-); 0 or 1 means the design scale.
     pub zoom: f32,
+    /// Source byte ranges to highlight (comment anchors, search matches),
+    /// sorted by start; drawn behind the text like the selection.
+    pub highlights: Vec<mdedit_editor::Highlight>,
 }
 
 /// A source position and how far into its line (0.0-1.0) the viewport top

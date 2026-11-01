@@ -1240,10 +1240,14 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
                         HighlightKind::CurrentSearchMatch => {
                             (colors.accent_soft, Border { color: colors.accent, width: 1.0, radius: 2.0.into() })
                         }
-                        HighlightKind::Comment => (colors.comment, Border::default()),
+                        HighlightKind::Comment | HighlightKind::ActiveComment => (colors.comment, Border::default()),
                     };
+                    let active = x.kind == HighlightKind::ActiveComment;
                     for (x, w, top, rh) in geometry::span_rects(p, s, e) {
                         quad(r, ox + x, oy + top, w, rh, color, border);
+                        if active {
+                            quad(r, ox + x, oy + top + rh - 2.0, w, 2.0, colors.comment_marker, Border::default());
+                        }
                     }
                 }
 

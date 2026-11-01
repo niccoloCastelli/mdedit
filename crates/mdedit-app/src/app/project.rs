@@ -740,7 +740,7 @@ impl App {
     }
 
     /// Hook: a save finished.
-    pub(super) fn project_saved(&mut self, path: &Path) -> Task<Message> {
+    pub(crate) fn project_saved(&mut self, path: &Path) -> Task<Message> {
         if !self.in_project(path) {
             return Task::none();
         }
