@@ -112,14 +112,6 @@ impl Mode {
             Mode::View => Mode::Edit,
         }
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Mode::Edit => "Edit",
-            Mode::Split => "Split",
-            Mode::View => "View",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
