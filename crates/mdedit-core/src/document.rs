@@ -37,6 +37,14 @@ impl Document {
         Self::with_buffer(Box::new(RopeBuffer::from_text(text)), true)
     }
 
+    /// Like [`Self::from_text`], but the initial parse becomes a background
+    /// job (see [`Self::take_parse_job`]) so opening stays fast.
+    pub fn from_text_deferred(text: &str) -> Self {
+        let mut doc = Self::with_buffer(Box::new(RopeBuffer::from_text(text)), false);
+        doc.blocks = Some(BlockIndex::deferred(doc.buffer.as_ref()));
+        doc
+    }
+
     /// Wrap any buffer. `parse = false` for large-file mode.
     pub fn with_buffer(buffer: Box<dyn TextBuffer>, parse: bool) -> Self {
         let blocks = parse.then(|| BlockIndex::parse(buffer.as_ref()));

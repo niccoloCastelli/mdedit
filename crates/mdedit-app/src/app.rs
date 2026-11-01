@@ -114,8 +114,9 @@ pub enum Message {
     OpenPicked(Vec<PathBuf>),
     Loaded(PathBuf, Result<Handoff<Document>, String>),
     SaveAsPicked(TabId, Option<PathBuf>),
-    Saved(TabId, PathBuf, SavePoint, Result<(), String>),
+    Saved(TabId, PathBuf, SavePoint, Result<Handoff<Option<mdedit_core::mapped::Remap>>, String>),
     Paste(TabId, Option<String>),
+    PasteTable(TabId, Option<String>),
     SetMode(Mode),
     Sidebar(SidebarTab),
     SidebarDragStart,
@@ -133,6 +134,11 @@ pub enum Message {
     Stats(TabId, u64, Stats),
     Tick,
     SessionTick,
+    /// A frame was drawn (only with `MDEDIT_TRACE`).
+    Frame,
+    /// Synthetic keystroke for `MDEDIT_TRACE_TYPE`.
+    TraceType,
+    Parsed(TabId, Handoff<mdedit_core::parse::ParseResult>),
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +156,7 @@ pub struct SidebarState {
 }
 
 pub struct App {
+    trace: Option<crate::trace::Trace>,
     pub paths: Paths,
     pub settings: Settings,
     keymap_file: Overrides,
@@ -177,9 +184,10 @@ pub struct App {
     close_after_save: Vec<TabId>,
     pub search: SearchState,
     /// Per tab: outline and stats with the buffer version they were made at.
-    pub outline: Vec<(TabId, u64, Vec<OutlineEntry>)>,
+    pub outline: Vec<(TabId, (u64, u64), Vec<OutlineEntry>)>,
     pub stats: Vec<(TabId, u64, Stats)>,
     stats_pending: Vec<TabId>,
+    stats_spawned: Option<Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -192,10 +200,14 @@ pub struct SearchState {
 
 pub const PALETTE_INPUT: &str = "palette-input";
 pub const SEARCH_INPUT: &str = "sidebar-search";
+pub const EDITOR: &str = "editor";
 const MAX_SEARCH_RESULTS: usize = 500;
 
 impl App {
     pub fn new() -> (Self, Task<Message>) {
+        if crate::trace::enabled() {
+            eprintln!("trace: app state created at {:?}", crate::trace::start().elapsed());
+        }
         let paths = Paths::detect();
         let (settings, settings_err) = Settings::load(&paths.settings());
         let (keymap_file, keymap_err) = load_keymap_file(&paths.keymap());
@@ -207,6 +219,8 @@ impl App {
         };
         let fresh = session.tabs.is_empty() && session.sidebar_width == 0.0;
         let mut app = Self {
+            trace: (crate::trace::enabled() || crate::trace::auto_type() > 0)
+                .then(|| crate::trace::Trace::new(crate::trace::auto_type())),
             sidebar: SidebarState {
                 visible: if fresh { true } else { session.sidebar_visible },
                 tab: SidebarTab::from_key(&session.sidebar_tab),
@@ -243,6 +257,7 @@ impl App {
             outline: Vec::new(),
             stats: Vec::new(),
             stats_pending: Vec::new(),
+            stats_spawned: None,
         };
         app.load_themes();
         app.apply_theme();
@@ -253,7 +268,10 @@ impl App {
             app.toast_error(w);
         }
 
-        let mut tasks = vec![iced::system::theme().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark))];
+        let mut tasks = vec![
+            iced::system::theme().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
+            iced::widget::operation::focus(EDITOR),
+        ];
         let threshold = app.settings.files.large_file_threshold();
         let mut to_open: Vec<PathBuf> = app.restoring.iter().map(|t| t.path.clone()).collect();
         let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -356,6 +374,7 @@ impl App {
         for tab in &mut self.tabs {
             tab.editor.line_numbers = e.line_numbers;
             tab.editor.monospace = e.monospace;
+            tab.editor.full_width = e.full_width;
         }
     }
 
@@ -365,6 +384,7 @@ impl App {
         let mut tab = Tab::new(self.next_id, doc, self.settings.editor.default_mode, self.next_untitled);
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
+        tab.editor.full_width = self.settings.editor.full_width;
         self.next_id += 1;
         self.next_untitled += 1;
         self.tabs.push(tab);
@@ -395,8 +415,17 @@ impl App {
             iced::system::theme_changes().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
             watch::changes(self.watched_paths()).map(Message::FileChanged),
         ];
-        if !self.toasts.is_empty() {
+        let stats_stale = self
+            .active_tab()
+            .is_some_and(|t| !self.stats.iter().any(|(id, v, _)| *id == t.id && *v == t.doc.buffer().version()));
+        if !self.toasts.is_empty() || stats_stale {
             subs.push(iced::time::every(Duration::from_millis(500)).map(|_| Message::Tick));
+        }
+        if let Some(t) = &self.trace {
+            subs.push(window::frames().map(|_| Message::Frame));
+            if t.doc_shown && t.to_type > 0 {
+                subs.push(iced::time::every(Duration::from_millis(30)).map(|_| Message::TraceType));
+            }
         }
         if self.session_dirty {
             subs.push(iced::time::every(Duration::from_secs(2)).map(|_| Message::SessionTick));
@@ -419,8 +448,25 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let focus_key = |a: &Self| (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), a.dialog.is_some());
+        let before = focus_key(self);
+        let jump = matches!(message, Message::OutlineJump(_) | Message::SearchJump(..));
+        let is_edit = matches!(message, Message::Editor(_, mdedit_editor::Action::Edit(_)) | Message::TraceType);
+        let started = Instant::now();
         let task = self.handle(message);
-        let derived = self.refresh_derived();
+        // Give the keyboard back to the document when the tab, mode or a
+        // modal layer changes, and after jumping from the sidebar.
+        let after = focus_key(self);
+        let task = if (before != after || jump) && !after.1 && !after.2 {
+            Task::batch([task, iced::widget::operation::focus(EDITOR)])
+        } else {
+            task
+        };
+        self.align_left_table();
+        let derived = Task::batch([self.refresh_derived(), self.spawn_parse_jobs()]);
+        if is_edit && let Some(t) = &mut self.trace {
+            t.update_took(started.elapsed());
+        }
         // Cursor moves and layout changes reach session.toml within a few
         // seconds, so a crash or kill loses little.
         if !self.session_dirty && self.restoring.is_empty() && !self.quitting {
@@ -453,7 +499,38 @@ impl App {
                     return self.request_close(id);
                 }
             }
-            Message::Editor(id, action) => return self.on_editor(id, action),
+            Message::Editor(id, action) => {
+                if let (Some(t), mdedit_editor::Action::Edit(_)) = (&mut self.trace, &action) {
+                    t.edit();
+                }
+                return self.on_editor(id, action);
+            }
+            Message::TraceType => {
+                let Some(t) = &mut self.trace else { return Task::none() };
+                if t.to_type == 0 {
+                    return Task::none();
+                }
+                t.to_type -= 1;
+                let last = t.to_type == 0;
+                let Some(tab) = self.active_tab() else { return Task::none() };
+                let (id, at) = (tab.id, tab.selection().head);
+                let edit = Edit::insert(at, "x", EditOrigin::User, mdedit_core::TxnId(0));
+                let typed = self.handle(Message::Editor(id, mdedit_editor::Action::Edit(edit)));
+                let moved = self.handle(Message::Editor(id, mdedit_editor::Action::Select(Selection::cursor(at + 1))));
+                if last {
+                    if let Some(t) = &self.trace {
+                        t.report();
+                    }
+                    return iced::exit();
+                }
+                return Task::batch([typed, moved]);
+            }
+            Message::Frame => {
+                let has_doc = self.active_tab().is_some_and(|t| t.doc.path.is_some());
+                if let Some(t) = &mut self.trace {
+                    t.frame(has_doc);
+                }
+            }
             Message::View(id, action) => return self.on_view(id, action),
             Message::OpenPicked(paths) => {
                 let threshold = self.settings.files.large_file_threshold();
@@ -489,6 +566,10 @@ impl App {
             Message::Saved(id, path, point, result) => return self.on_saved(id, path, point, result),
             Message::Paste(id, Some(text)) => {
                 if let Some(tab) = self.tab_mut(id) {
+                    if let Some(result) = core_cmd::smart_paste(&tab.doc, tab.selection(), &text) {
+                        tab.apply_command(result);
+                        return Task::none();
+                    }
                     let range = tab.selection().range();
                     let txn = tab.doc.next_txn();
                     let end = range.start + text.len();
@@ -496,7 +577,13 @@ impl App {
                     tab.set_selection(Selection::cursor(end));
                 }
             }
-            Message::Paste(_, None) => {}
+            Message::Paste(_, None) | Message::PasteTable(_, None) => {}
+            Message::PasteTable(id, Some(text)) => {
+                if let Some(tab) = self.tab_mut(id) {
+                    let result = core_cmd::run(&tab.doc, tab.selection(), &core_cmd::DocCommand::PasteTable { text });
+                    tab.apply_command(result);
+                }
+            }
             Message::SetMode(mode) => self.set_mode(mode),
             Message::Sidebar(t) => {
                 if self.sidebar.visible && self.sidebar.tab == t {
@@ -520,6 +607,7 @@ impl App {
             Message::OutlineJump(byte) => {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.set_selection(Selection::cursor(byte));
+                    tab.editor.scroll_to_byte = Some(byte);
                 }
             }
             Message::SearchQuery(q) => {
@@ -529,6 +617,7 @@ impl App {
             Message::SearchJump(start, end) => {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.set_selection(Selection { anchor: start, head: end });
+                    tab.editor.scroll_to_byte = Some(start);
                 }
             }
             Message::Palette(msg) => return self.on_palette(msg),
@@ -545,6 +634,12 @@ impl App {
                 self.stats.retain(|(t, _, _)| *t != id);
                 self.stats.push((id, version, stats));
             }
+            Message::Parsed(id, result) => {
+                if let (Some(tab), Some(result)) = (self.tabs.iter_mut().find(|t| t.id == id), result.take()) {
+                    // A stale result is dropped; the next job is taken below.
+                    tab.doc.finish_parse(result);
+                }
+            }
             Message::SessionTick => {
                 self.session_dirty = false;
                 self.save_session();
@@ -557,6 +652,43 @@ impl App {
         Task::none()
     }
 
+    /// Auto-align a table in Edit mode when the cursor leaves it
+    /// (DESIGN_SYSTEM 8.4).
+    fn align_left_table(&mut self) {
+        let Some(tab) = self.tabs.get_mut(self.active) else { return };
+        if tab.doc.is_large() || tab.read_only() {
+            return;
+        }
+        let sel = tab.selection();
+        let now = core_cmd::table_range_at(&tab.doc, sel.head);
+        if now.is_none()
+            && let Some(old) = tab.table.take()
+            && let Some(result) = core_cmd::align_table_at(&tab.doc, old.start, sel)
+        {
+            tab.apply_command(result);
+        }
+        tab.table = now;
+    }
+
+    /// Reparse windows over 64 KB (and the initial parse of an opened
+    /// file) run on a worker; the previous blocks stay shown meanwhile.
+    fn spawn_parse_jobs(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for tab in &mut self.tabs {
+            if let Some(job) = tab.doc.take_parse_job() {
+                let id = tab.id;
+                tasks.push(Task::perform(
+                    async move { tokio::task::spawn_blocking(move || job.run()).await.ok() },
+                    move |r| match r {
+                        Some(r) => Message::Parsed(id, Handoff::new(r)),
+                        None => Message::Tick,
+                    },
+                ));
+            }
+        }
+        Task::batch(tasks)
+    }
+
     /// Keep cheap derived data (outline, search results, stats) in step with
     /// the active buffer. Expensive work (stats) runs on a worker.
     fn refresh_derived(&mut self) -> Task<Message> {
@@ -566,17 +698,23 @@ impl App {
         let (id, version) = (tab.id, tab.doc.buffer().version());
 
         if self.sidebar.visible && self.sidebar.tab == SidebarTab::Outline {
-            let fresh = self.outline.iter().any(|(t, v, _)| *t == id && *v == version);
+            let key = (version, tab.doc.blocks().map_or(0, |b| b.generation()));
+            let fresh = self.outline.iter().any(|(t, k, _)| *t == id && *k == key);
             if !fresh {
-                let entries =
-                    tab.doc.blocks().map(|b| mdedit_core::parse::outline(b, tab.doc.buffer())).unwrap_or_default();
+                let entries = match tab.doc.blocks() {
+                    Some(b) => mdedit_core::parse::outline(b, tab.doc.buffer()),
+                    // Large files: `scan_outline` on a worker, with large-file mode.
+                    None => Vec::new(),
+                };
                 self.outline.retain(|(t, _, _)| *t != id);
-                self.outline.push((id, version, entries));
+                self.outline.push((id, key, entries));
             }
         }
 
         if self.sidebar.visible
             && self.sidebar.tab == SidebarTab::Search
+            // Large files need the streamed background search (M2).
+            && !tab.doc.is_large()
             && self.search.for_version != Some((id, version))
         {
             let query = SearchQuery { pattern: self.search.query.clone(), ..Default::default() };
@@ -597,22 +735,18 @@ impl App {
         }
 
         let stale = !self.stats.iter().any(|(t, v, _)| *t == id && *v == version);
-        if stale && !self.stats_pending.contains(&id) {
+        // At most one count per second while typing; the subscription's
+        // tick picks up the last change once typing stops.
+        let due = self.stats_spawned.is_none_or(|t| t.elapsed() >= Duration::from_secs(1));
+        if stale && due && !self.stats_pending.contains(&id) {
             self.stats_pending.push(id);
+            self.stats_spawned = Some(Instant::now());
             let snapshot = tab.doc.buffer().snapshot();
             return Task::perform(
                 async move {
-                    tokio::task::spawn_blocking(move || {
-                        let mut stats = Stats::default();
-                        for chunk in snapshot.chunks(0..snapshot.len_bytes()) {
-                            let s = String::from_utf8_lossy(chunk);
-                            stats.chars += s.chars().filter(|c| *c != '\r' && *c != '\n').count();
-                        }
-                        stats.words = snapshot.text().split_whitespace().count();
-                        stats
-                    })
-                    .await
-                    .unwrap_or_default()
+                    tokio::task::spawn_blocking(move || count_stats(snapshot.chunks(0..snapshot.len_bytes())))
+                        .await
+                        .unwrap_or_default()
                 },
                 move |stats| Message::Stats(id, version, stats),
             );
@@ -667,17 +801,15 @@ impl App {
             Command::App(cmd) => self.run_app(*cmd),
             Command::Doc(cmd) => {
                 let Some(tab) = self.active_tab_mut() else { return Task::none() };
-                if tab.doc.format.read_only {
+                if tab.read_only() {
                     return Task::none();
                 }
-                let result = core_cmd::run(&tab.doc, tab.selection(), cmd);
-                if !result.edits.is_empty() {
-                    let txn = tab.doc.next_txn();
-                    for edit in result.edits {
-                        tab.apply(&Edit { txn, origin: EditOrigin::Command, ..edit });
-                    }
+                if let core_cmd::DocCommand::PasteTable { .. } = cmd {
+                    let id = tab.id;
+                    return iced::clipboard::read().map(move |t| Message::PasteTable(id, t));
                 }
-                tab.set_selection(result.selection);
+                let result = core_cmd::run(&tab.doc, tab.selection(), cmd);
+                tab.apply_command(result);
                 Task::none()
             }
         }
@@ -794,6 +926,7 @@ impl App {
             }
             ToggleFullWidth => {
                 self.settings.editor.full_width = !self.settings.editor.full_width;
+                self.apply_editor_settings();
                 self.store_settings();
             }
             ToggleLineNumbers => {
@@ -889,7 +1022,8 @@ impl App {
         self.next_id += 1;
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
-        if tab.doc.format.read_only {
+        tab.editor.full_width = self.settings.editor.full_width;
+        if tab.read_only() {
             self.toast("Not valid UTF-8: opened read-only.");
         }
         if let Some(t) = &restored {
@@ -967,7 +1101,11 @@ impl App {
             Ok(job) => {
                 let (path, point) = (job.path.clone(), job.point);
                 Task::perform(
-                    async move { tokio::task::spawn_blocking(move || job.run()).await.map_err(|e| e.to_string())? },
+                    async move {
+                        let remap =
+                            tokio::task::spawn_blocking(move || job.run()).await.map_err(|e| e.to_string())??;
+                        Ok(Handoff::new(remap))
+                    },
                     move |r| Message::Saved(id, path.clone(), point, r),
                 )
             }
@@ -979,12 +1117,18 @@ impl App {
         }
     }
 
-    fn on_saved(&mut self, id: TabId, path: PathBuf, point: SavePoint, result: Result<(), String>) -> Task<Message> {
+    fn on_saved(
+        &mut self,
+        id: TabId,
+        path: PathBuf,
+        point: SavePoint,
+        result: Result<Handoff<Option<mdedit_core::mapped::Remap>>, String>,
+    ) -> Task<Message> {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match result {
-            Ok(()) => {
+            Ok(remap) => {
                 let was = tab.doc.path.clone();
-                tab.finish_save(path.clone(), point);
+                tab.finish_save(path.clone(), point, remap.take().flatten());
                 if was.as_deref() != Some(&path) {
                     self.session.push_recent(&path);
                     self.save_session();
@@ -1076,6 +1220,9 @@ impl App {
     }
 
     fn exit(&mut self) -> Task<Message> {
+        if let Some(t) = &self.trace {
+            t.report();
+        }
         self.save_session();
         iced::exit()
     }
@@ -1124,17 +1271,36 @@ impl App {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
-                if !tab.doc.format.read_only {
-                    tab.apply(&edit);
+                if tab.read_only() {
+                    return Task::none();
+                }
+                // Typed text (list continuation, indent, wrapping a selection)
+                // may become a smarter command (DESIGN_SYSTEM 8.3).
+                let sel = tab.selection();
+                let typed = edit.range == sel.range() && !edit.text.is_empty();
+                match typed.then(|| core_cmd::smart_input(&tab.doc, sel, &edit.text)).flatten() {
+                    Some(result) => {
+                        tab.apply_command(result);
+                        tab.skip_select = true;
+                    }
+                    None => tab.apply(&edit),
                 }
             }
-            Action::Select(sel) => tab.set_selection(sel),
-            Action::Scroll(y) => tab.editor.scroll_y = y,
+            Action::Select(sel) => {
+                if !std::mem::take(&mut tab.skip_select) {
+                    tab.set_selection(sel);
+                }
+            }
+            Action::Scroll(y) => {
+                tab.editor.scroll_y = y;
+                // The jump happened; clear it so the same byte can be asked for again.
+                tab.editor.scroll_to_byte = None;
+            }
             // Split scroll sync (ARCHITECTURE 4.3); wired by the app shell.
             Action::TopAnchor { .. } => {}
             Action::Copy(text) => return iced::clipboard::write(text),
             Action::Paste => {
-                if tab.doc.format.read_only {
+                if tab.read_only() {
                     return Task::none();
                 }
                 return iced::clipboard::read().map(move |t| Message::Paste(id, t));
@@ -1150,7 +1316,7 @@ impl App {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
-                if !tab.doc.format.read_only && tab.mode == Mode::View {
+                if !tab.read_only() && tab.mode == Mode::View {
                     tab.apply(&edit);
                 }
             }
@@ -1271,6 +1437,13 @@ impl App {
             if now == tab.disk && tab.external.is_none() {
                 continue;
             }
+            // A mapped file is never reloaded silently: the map may be stale.
+            if let Some(m) = tab.doc.mapped() {
+                if m.disk_change() != mdedit_core::DiskChange::Unchanged {
+                    tab.external = Some(if now.is_some() { External::Changed } else { External::Deleted });
+                }
+                continue;
+            }
             match now {
                 None => {
                     tab.external = Some(External::Deleted);
@@ -1291,6 +1464,29 @@ impl App {
             self.toast_error(format!("Could not reload {}: {e}", path.display()));
         }
     }
+}
+
+/// Words (runs of non-whitespace) and characters (excluding line breaks)
+/// over byte chunks, which may split a UTF-8 sequence.
+fn count_stats<'a>(chunks: impl Iterator<Item = &'a [u8]>) -> Stats {
+    let mut stats = Stats::default();
+    let mut in_word = false;
+    for chunk in chunks {
+        for &b in chunk {
+            if b & 0xC0 == 0x80 {
+                continue; // UTF-8 continuation byte
+            }
+            if b != b'\n' && b != b'\r' {
+                stats.chars += 1;
+            }
+            let space = b.is_ascii_whitespace();
+            if !space && !in_word {
+                stats.words += 1;
+            }
+            in_word = !space;
+        }
+    }
+    stats
 }
 
 fn load_keymap_file(path: &Path) -> (Overrides, Option<String>) {
@@ -1321,4 +1517,20 @@ fn clamp_char(doc: &Document, byte: usize) -> usize {
         off -= 1;
     }
     start + off
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stats_across_split_chunks() {
+        let text = "Hello wörld,\r\n  two  words\n";
+        let whole = count_stats(std::iter::once(text.as_bytes()));
+        assert_eq!(whole, Stats { words: 4, chars: 24 });
+        let (a, b) = text.as_bytes().split_at(8); // inside "ö"
+        assert_eq!(count_stats([a, b].into_iter()), whole);
+        let (a, b) = text.as_bytes().split_at(3); // inside "Hello"
+        assert_eq!(count_stats([a, b].into_iter()), whole);
+    }
 }
