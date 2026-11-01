@@ -8,7 +8,8 @@
 //! Detaching rules for edits:
 //! - Editing inside a range shrinks or grows it; it detaches only when every
 //!   char of the quote has been deleted (the comment is kept, in the
-//!   "Detached" group).
+//!   "Detached" group). Undoing (or redoing) the edit that detached it
+//!   puts the range back.
 //! - An [`EditOrigin::External`] edit (reload after the file changed on
 //!   disk) that touches a range marks it pending instead of guessing; call
 //!   [`LiveAnchors::reanchor_pending`] with the new text to find it again.
@@ -26,12 +27,35 @@ pub struct LiveAnchors {
     /// Ranges an external change touched; looked up again by
     /// [`Self::reanchor_pending`]. May be shorter than `ranges`.
     pending: Vec<bool>,
+    /// Comments detached by an in-app edit, for undo to bring back.
+    detached: Vec<Detach>,
 }
+
+/// How a comment was detached: the text the edit removed, where the edit's
+/// new text now is, and where the comment sat in the removed text. When an
+/// undo puts exactly that text back over exactly that range, the comment
+/// is attached again at its old place.
+#[derive(Debug, Clone)]
+struct Detach {
+    comment: usize,
+    /// Range of the detaching edit's new text, moved by later edits.
+    at: std::ops::Range<usize>,
+    removed: String,
+    /// The comment's range relative to the start of `removed`.
+    rel: std::ops::Range<usize>,
+}
+
+/// Detach records kept at most; older ones are dropped.
+const MAX_DETACHED: usize = 64;
 
 impl LiveAnchors {
     /// Re-anchor every comment against the current text (on open).
     pub fn resolve(comments: &[Comment], buf: &dyn TextBuffer) -> Self {
-        Self { ranges: comments.iter().map(|c| reanchor(&c.anchor, buf)).collect(), pending: Vec::new() }
+        Self {
+            ranges: comments.iter().map(|c| reanchor(&c.anchor, buf)).collect(),
+            pending: Vec::new(),
+            detached: Vec::new(),
+        }
     }
 
     /// Track a new comment (appended to `Sidecar::comments` at the same
@@ -45,6 +69,12 @@ impl LiveAnchors {
     pub fn remove(&mut self, idx: usize) -> Resolution {
         if idx < self.pending.len() {
             self.pending.remove(idx);
+        }
+        self.detached.retain(|d| d.comment != idx);
+        for d in &mut self.detached {
+            if d.comment > idx {
+                d.comment -= 1;
+            }
         }
         self.ranges.remove(idx)
     }
@@ -61,6 +91,7 @@ impl LiveAnchors {
     pub fn mark_all_pending(&mut self) {
         self.pending = self.ranges.iter().map(|r| !r.is_detached()).collect();
         self.ranges.fill(Resolution::Detached);
+        self.detached.clear();
     }
 
     /// Re-anchor the comments an external change touched, from their stored
@@ -92,6 +123,18 @@ impl EditListener for LiveAnchors {
     fn on_edit(&mut self, applied: &AppliedEdit) {
         let edit = &applied.edit.range;
         let external = applied.edit.origin == EditOrigin::External;
+        let history = matches!(applied.edit.origin, EditOrigin::Undo | EditOrigin::Redo);
+        let mut restored = Vec::new();
+        self.detached.retain_mut(|d| {
+            if history && d.at == *edit && d.removed == applied.edit.text {
+                restored.push((d.comment, edit.start + d.rel.start..edit.start + d.rel.end));
+                return false;
+            }
+            // Grow over text inserted at the edges, so undoing that insertion
+            // first gives the exact range back.
+            d.at = applied.map_offset(d.at.start, false)..applied.map_offset(d.at.end, true);
+            !external
+        });
         for (i, res) in self.ranges.iter_mut().enumerate() {
             let Resolution::Attached(r) = res else { continue };
             if external && edit.start <= r.end && edit.end >= r.start {
@@ -113,7 +156,24 @@ impl EditListener for LiveAnchors {
             // start: replacement text for the comment's tail is not part of it.
             let end =
                 if edit.start < r.end && r.end <= edit.end { edit.start } else { applied.map_offset(r.end, false) };
-            *res = if start < end { Resolution::Attached(start..end) } else { Resolution::Detached };
+            if start < end {
+                *res = Resolution::Attached(start..end);
+            } else {
+                let rel = r.start - edit.start..r.end - edit.start;
+                *res = Resolution::Detached;
+                if !external {
+                    let at = edit.start..edit.start + applied.edit.text.len();
+                    self.detached.push(Detach { comment: i, at, removed: applied.inverse.text.clone(), rel });
+                }
+            }
+        }
+        if self.detached.len() > MAX_DETACHED {
+            self.detached.drain(..self.detached.len() - MAX_DETACHED);
+        }
+        for (i, range) in restored {
+            if let Some(res @ Resolution::Detached) = self.ranges.get_mut(i) {
+                *res = Resolution::Attached(range);
+            }
         }
     }
 }
@@ -194,6 +254,56 @@ mod tests {
         assert_eq!(f.live.ranges[0], Resolution::Detached);
         assert!(!f.live.has_pending());
         assert_eq!(f.live.ranges.len(), 1);
+    }
+
+    #[test]
+    fn undo_brings_a_deleted_comment_back() {
+        let text = "Intro.\n\nA sentence worth a comment.\n\nOutro.\n";
+        let mut doc = Document::from_text(text);
+        let start = text.find("worth").unwrap();
+        let comments = vec![comment(make_anchor(doc.buffer(), start..start + 5))];
+        let mut live = LiveAnchors::resolve(&comments, doc.buffer());
+        let mut version = doc.log().last_version();
+        let mut sync = |doc: &Document, live: &mut LiveAnchors| version = doc.log().catch_up(live, version).unwrap();
+
+        // Delete the whole sentence, then type elsewhere.
+        let p = text.find("A sentence").unwrap();
+        let e = text.find("\n\nOutro").unwrap();
+        doc.apply(&Edit::delete(p..e, EditOrigin::User, TxnId(1)));
+        sync(&doc, &mut live);
+        assert_eq!(live.ranges[0], Resolution::Detached);
+        doc.apply(&Edit::insert(0, "# T\n\n", EditOrigin::User, TxnId(2)));
+        sync(&doc, &mut live);
+        assert_eq!(live.ranges[0], Resolution::Detached);
+
+        // Undo both: the comment is back on "worth".
+        while doc.undo().is_some() {
+            sync(&doc, &mut live);
+        }
+        assert_eq!(doc.buffer().text(), text);
+        let r = live.ranges[0].range().expect("attached again");
+        assert_eq!(&doc.buffer().text()[r], "worth");
+
+        // Redo detaches it again, and undo restores it again.
+        doc.redo();
+        sync(&doc, &mut live);
+        assert_eq!(live.ranges[0], Resolution::Detached);
+        doc.undo();
+        sync(&doc, &mut live);
+        assert_eq!(&doc.buffer().text()[live.ranges[0].range().unwrap()], "worth");
+    }
+
+    #[test]
+    fn retyping_the_text_does_not_reattach() {
+        let mut f = Fixture::new("one two three\n", &["two"]);
+        f.apply(4..7, "", EditOrigin::User);
+        assert_eq!(f.live.ranges[0], Resolution::Detached);
+        // Only undo or redo restores: typing the same text is new text.
+        f.apply(4..4, "two", EditOrigin::User);
+        assert_eq!(f.live.ranges[0], Resolution::Detached);
+        f.apply(4..7, "", EditOrigin::User);
+        f.apply(4..4, "two", EditOrigin::Undo);
+        assert_eq!(f.quoted(0).as_deref(), Some("two"));
     }
 
     #[test]
