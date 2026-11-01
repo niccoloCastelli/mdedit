@@ -1226,7 +1226,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
                     let e = sel.end.min(line_end) - v.start;
                     let newline = sel.end > line_end && v.line + 1 < lines;
                     for (x, top, w, rh) in geometry::selection_rects(p, s, e, newline, newline_w) {
-                        quad(r, ox + x, oy + top, w, rh, colors.accent_soft, Border::default());
+                        quad(r, ox + x, oy + top, w, rh, colors.selection, Border::default());
                     }
                 }
 

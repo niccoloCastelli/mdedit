@@ -202,7 +202,7 @@ pub fn input(theme: &Theme) -> impl Fn(&iced::Theme, text_input::Status) -> text
             icon: c(theme, T::TextMuted),
             placeholder: c(theme, T::TextMuted),
             value: c(theme, T::Text),
-            selection: c(theme, T::AccentSoft),
+            selection: c(theme, T::Selection),
         }
     }
 }

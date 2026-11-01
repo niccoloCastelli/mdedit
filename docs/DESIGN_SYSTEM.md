@@ -46,7 +46,8 @@ Widgets only ever use these names. Themes assign values to them.
 | `text-muted` | Placeholders, line numbers, timestamps, captions |
 | `accent` | Primary buttons, focus rings, cursor, section numbers |
 | `accent-text` | Accent used as small text (links, eyebrows) |
-| `accent-soft` | Selection background, badges, hovered accent items |
+| `accent-soft` | Badges, hovered accent items, current search match |
+| `selection` | Text selection background (stronger than `accent-soft` so it reads on `bg`) |
 | `on-accent` | Text on an `accent` fill |
 | `warning-bg` / `warning-text` | Callout boxes, large-file banner, unsynced state |
 | `danger` | Destructive actions, merge conflicts, errors |
@@ -71,6 +72,7 @@ Widgets only ever use these names. Themes assign values to them.
 | `accent` | `#D9542B` | PDF eyebrow, numbers, primary button |
 | `accent-text` | `#B8431F` | accent darkened for small text, 5.4:1 |
 | `accent-soft` | `#FBE9E2` | PDF step badges |
+| `selection` | `#F6CBBA` | |
 | `on-accent` | `#FFFFFF` | 4.0:1, use only at ≥14 px semibold (UI buttons) |
 | `warning-bg` | `#FBF0D9` | PDF callout |
 | `warning-text` | `#8A5A00` | PDF callout title, 5.2:1 on `warning-bg` |
@@ -97,6 +99,7 @@ Sampled from the dark console screenshots inside the PDF.
 | `accent` | `#E86A43` | slightly lifted from `#D9542B` for dark bg, 5.9:1 |
 | `accent-text` | `#FF8A5C` | 8.1:1 |
 | `accent-soft` | `#3A2118` | |
+| `selection` | `#5E3221` | |
 | `on-accent` | `#111111` | 5.9:1 |
 | `warning-bg` | `#2E2412` | |
 | `warning-text` | `#D6A24A` | |
@@ -376,7 +379,7 @@ table and can be overridden in a `keymap.toml`.
 ### 8.5 Focus, selection, cursor
 
 - Focus ring: 2 px `accent`, offset 2, on every focusable control.
-- Cursor: 2 px wide bar, `accent`. Selection: `accent-soft`. Multi-cursor is a
+- Cursor: 2 px wide bar, `accent`. Selection: `selection`. Multi-cursor is a
   later option, not in v1.
 - The search match currently selected uses `accent-soft` with a 1 px `accent`
   outline; other matches use `warning-bg`.
