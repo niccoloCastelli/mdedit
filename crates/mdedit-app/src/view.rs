@@ -189,27 +189,17 @@ impl App {
     fn document_body<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
         let t = &self.theme;
         let id = tab.id;
-        let measure = if self.settings.editor.full_width { f32::INFINITY } else { self.settings.editor.measure };
-        let column_of = |content: Element<'a, Message>| -> Element<'a, Message> {
-            container(container(content).max_width(measure).width(Length::Fill).height(Length::Fill))
-                .padding(Padding::from([SPACE_4, SPACE_6]))
-                .center_x(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        };
-        // The editor applies the measure and side padding itself.
+        // Both widgets apply the measure and side padding themselves.
         let edit = || -> Element<'a, Message> {
             mdedit_editor::Editor::new(&tab.doc, &tab.editor, t, move |a| Message::Editor(id, a)).id(EDITOR).into()
         };
         match tab.mode {
             Mode::Edit => edit(),
-            Mode::View => column_of(mdedit_view::view(&tab.doc, &tab.view, t, move |a| Message::View(id, a))),
-            Mode::Split => row![
-                edit(),
-                vline(t),
-                column_of(mdedit_view::view(&tab.doc, &tab.preview, t, move |a| Message::View(id, a))),
-            ]
-            .into(),
+            Mode::View => mdedit_view::view(&tab.doc, &tab.view, t, move |a| Message::View(id, a)),
+            Mode::Split => {
+                row![edit(), vline(t), mdedit_view::view(&tab.doc, &tab.preview, t, move |a| Message::View(id, a)),]
+                    .into()
+            }
         }
     }
 
