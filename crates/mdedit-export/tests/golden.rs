@@ -131,6 +131,20 @@ fn golden_cases_export() {
     }
 }
 
+/// docx-rs keeps process-wide id counters (hyperlinks, pictures,
+/// footnotes); building the same document twice must give the same XML.
+#[test]
+fn docx_xml_is_deterministic() {
+    let md = "# T\n\n[a](https://a.example) ![i](diagram.png)[^n]\n\n[^n]: Note [b](https://b.example).\n";
+    let template = Template::builtin("guide").unwrap();
+    let opts = options(md);
+    let first = docx_parts(md, &sample_dir(), &template, &opts).unwrap();
+    // Bump the global counters in between.
+    export(md, &sample_dir(), &template, &opts, ExportFormat::Docx).unwrap();
+    let second = docx_parts(md, &sample_dir(), &template, &opts).unwrap();
+    assert_eq!(first, second);
+}
+
 #[test]
 fn template_typ_overrides_the_builtin() {
     let tmp = tempfile::tempdir().unwrap();
