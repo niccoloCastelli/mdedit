@@ -21,6 +21,9 @@ pub fn display_width(s: &str) -> usize {
     s.graphemes(true).map(|g| if g.width() >= 2 { 2 } else { 1 }).sum()
 }
 
+/// A cell's trimmed content and its slot between the pipes.
+type CellRanges = (Range<usize>, Range<usize>);
+
 /// A parsed table. Rows exclude the delimiter row: `rows[0]` is the header.
 #[derive(Debug, Clone)]
 pub(crate) struct Table {
@@ -33,7 +36,7 @@ pub(crate) struct Table {
     pub aligns: Vec<ColumnAlign>,
     /// Absolute byte ranges of each source row's cells: trimmed content and
     /// the slot between the pipes (`None` for the delimiter row).
-    cells: Vec<Option<Vec<(Range<usize>, Range<usize>)>>>,
+    cells: Vec<Option<Vec<CellRanges>>>,
 }
 
 /// Split a row into trimmed cells: `(content range, slot range)` relative to
@@ -489,7 +492,8 @@ pub(crate) fn paste_table(doc: &Document, sel: Selection, text: &str) -> Command
     if rows.is_empty() {
         return CommandResult { edits: Vec::new(), selection: sel };
     }
-    let mut t = Table { range: 0..0, first_line: 0, prefix: String::new(), rows, aligns: Vec::new(), cells: Vec::new() };
+    let mut t =
+        Table { range: 0..0, first_line: 0, prefix: String::new(), rows, aligns: Vec::new(), cells: Vec::new() };
     t.normalise();
     let (text, _) = t.render("\n");
     insert_block(doc, sel, &text, After::Below)

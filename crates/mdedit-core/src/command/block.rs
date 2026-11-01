@@ -211,10 +211,8 @@ pub(crate) fn toggle_code_block(doc: &Document, sel: Selection) -> CommandResult
         ch.replace(lr.clone(), format!("```{nl}{nl}```"));
         return ch.finish(Selection::cursor(lr.start + 3 + nl.len()));
     }
-    let longest = (first..=last)
-        .map(|l| buf.line(l).trim_start().bytes().take_while(|&b| b == b'`').count())
-        .max()
-        .unwrap_or(0);
+    let longest =
+        (first..=last).map(|l| buf.line(l).trim_start().bytes().take_while(|&b| b == b'`').count()).max().unwrap_or(0);
     let fence = "`".repeat(longest.max(2) + 1);
     ch.insert(buf.line_to_byte(first), format!("{fence}{nl}"));
     ch.insert(line_range(buf, last).end, format!("{nl}{fence}"));

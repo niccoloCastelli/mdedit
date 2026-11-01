@@ -405,21 +405,41 @@ fn table_cell_navigation() {
 #[test]
 fn table_row_operations() {
     let t = "| h1 | h2 |\n|---|---|\n| a¦ | b |\n| c | d |";
-    check(DocCommand::Table(TableOp::InsertRowAbove), t, "| h1  | h2  |\n| --- | --- |\n| ¦    |     |\n| a   | b   |\n| c   | d   |");
-    check(DocCommand::Table(TableOp::InsertRowBelow), t, "| h1  | h2  |\n| --- | --- |\n| a   | b   |\n| ¦    |     |\n| c   | d   |");
+    check(
+        DocCommand::Table(TableOp::InsertRowAbove),
+        t,
+        "| h1  | h2  |\n| --- | --- |\n| ¦    |     |\n| a   | b   |\n| c   | d   |",
+    );
+    check(
+        DocCommand::Table(TableOp::InsertRowBelow),
+        t,
+        "| h1  | h2  |\n| --- | --- |\n| a   | b   |\n| ¦    |     |\n| c   | d   |",
+    );
     check(DocCommand::Table(TableOp::DeleteRow), t, "| h1  | h2  |\n| --- | --- |\n| ¦c   | d   |");
     check(DocCommand::Table(TableOp::MoveRowDown), t, "| h1  | h2  |\n| --- | --- |\n| c   | d   |\n| a¦   | b   |");
     check(DocCommand::Table(TableOp::MoveRowUp), t, t);
     let header = "| h¦1 | h2 |\n|---|---|\n| a | b |";
     check(DocCommand::Table(TableOp::DeleteRow), header, header);
-    check(DocCommand::Table(TableOp::InsertRowAbove), header, "| h1  | h2  |\n| --- | --- |\n| ¦    |     |\n| a   | b   |");
+    check(
+        DocCommand::Table(TableOp::InsertRowAbove),
+        header,
+        "| h1  | h2  |\n| --- | --- |\n| ¦    |     |\n| a   | b   |",
+    );
 }
 
 #[test]
 fn table_column_operations() {
     let t = "| h1 | h2 |\n|:--|---|\n| a¦ | b |";
-    check(DocCommand::Table(TableOp::InsertColumnLeft), t, "|     | h1  | h2  |\n| --- | :-- | --- |\n| ¦    | a   | b   |");
-    check(DocCommand::Table(TableOp::InsertColumnRight), t, "| h1  |     | h2  |\n| :-- | --- | --- |\n| a   | ¦    | b   |");
+    check(
+        DocCommand::Table(TableOp::InsertColumnLeft),
+        t,
+        "|     | h1  | h2  |\n| --- | :-- | --- |\n| ¦    | a   | b   |",
+    );
+    check(
+        DocCommand::Table(TableOp::InsertColumnRight),
+        t,
+        "| h1  |     | h2  |\n| :-- | --- | --- |\n| a   | ¦    | b   |",
+    );
     check(DocCommand::Table(TableOp::DeleteColumn), t, "| h2  |\n| --- |\n| ¦b   |");
     check(DocCommand::Table(TableOp::MoveColumnRight), t, "| h2  | h1  |\n| --- | :-- |\n| b   | a¦   |");
     // Already leftmost: nothing to do.
@@ -510,8 +530,8 @@ mod fuzz {
     use proptest::prelude::*;
 
     const PIECES: &[&str] = &[
-        "- ", "1. ", "> ", "| ", " |", "|---|", "*", "**", "`", "# ", "\n", "\n\n", "a", "word ", "日本", " ", "[", "](",
-        ")", "~~", "_", "\t", "---", "```", "[ ] ", "\\|", "é", "\r\n",
+        "- ", "1. ", "> ", "| ", " |", "|---|", "*", "**", "`", "# ", "\n", "\n\n", "a", "word ", "日本", " ", "[",
+        "](", ")", "~~", "_", "\t", "---", "```", "[ ] ", "\\|", "é", "\r\n",
     ];
 
     fn doc_text() -> impl Strategy<Value = String> {

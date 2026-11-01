@@ -77,6 +77,10 @@ fn context(doc: &Document, range: &Range<usize>) -> Range<usize> {
     buf.line_to_byte(first)..line_range(buf, last).end
 }
 
+/// An open tag while scanning: its span kind (if one we track), its range
+/// and, for links, the range of the link text seen so far.
+type Frame = (Option<SpanKind>, Range<usize>, Option<Range<usize>>);
+
 fn spans(doc: &Document, range: &Range<usize>) -> Vec<Span> {
     let ctx = context(doc, range);
     let text = doc.buffer().slice(ctx.clone());
@@ -84,8 +88,8 @@ fn spans(doc: &Document, range: &Range<usize>) -> Vec<Span> {
     let abs = |r: Range<usize>| base + r.start..base + r.end;
     let mut out = Vec::new();
     // (kind, range, link text range) per open tag.
-    let mut stack: Vec<(Option<SpanKind>, Range<usize>, Option<Range<usize>>)> = Vec::new();
-    let extend_links = |stack: &mut Vec<(Option<SpanKind>, Range<usize>, Option<Range<usize>>)>, r: &Range<usize>| {
+    let mut stack: Vec<Frame> = Vec::new();
+    let extend_links = |stack: &mut Vec<Frame>, r: &Range<usize>| {
         for (kind, _, inner) in stack.iter_mut() {
             if *kind == Some(SpanKind::Link) {
                 *inner = Some(match inner.take() {
@@ -251,7 +255,11 @@ pub(crate) fn toggle(doc: &Document, sel: Selection, kind: Inline) -> CommandRes
         let run = |r: Range<usize>, rev: bool| {
             let s = buf.slice(r);
             let b = s.as_bytes();
-            if rev { b.iter().rev().take_while(|&&x| x == c).count() } else { b.iter().take_while(|&&x| x == c).count() }
+            if rev {
+                b.iter().rev().take_while(|&&x| x == c).count()
+            } else {
+                b.iter().take_while(|&&x| x == c).count()
+            }
         };
         let lr = line_range(buf, buf.byte_to_line(at));
         if run(lr.start..at, true) == m.len() && run(at..lr.end, false) == m.len() {
@@ -334,9 +342,7 @@ fn insert_link(doc: &Document, sel: Selection, url: Option<&str>, image: bool) -
             let cursor = if text.is_empty() { start + bang.len() + 1 } else { start + s.len() };
             (s, cursor)
         }
-        None if !image && is_url(&text) => {
-            (format!("[]({})", link_dest(text.trim())), start + 1)
-        }
+        None if !image && is_url(&text) => (format!("[]({})", link_dest(text.trim())), start + 1),
         None if text.is_empty() && !image => ("[]()".to_string(), start + 1),
         None => {
             let s = format!("{bang}[{text}]()");
