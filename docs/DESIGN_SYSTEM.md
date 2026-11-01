@@ -157,20 +157,15 @@ marker = "text-muted"     # may reference another token or a hex value
 
 ### 3.1 Families
 
-The PDF's fonts are not named in the file (they are embedded as Type 3
-outlines), so the families below are the closest open-licence (OFL) matches to
-what it shows: a tight neo-grotesk for headings and body, and a monospace for
-numbers and code. All are bundled in the binary so rendering is identical on
+These are the fonts the reference PDF uses (confirmed by Niccolo). All are
+open-licence (OFL) and bundled in the binary, so rendering is identical on
 every platform and in exports.
 
 | Role | Family | Why |
 |---|---|---|
-| UI and prose (default) | **Hanken Grotesk** | Closest match to the PDF: tight geometric-grotesk headings, open body text |
-| Monospace | **JetBrains Mono** | Matches the PDF section numbers; good code legibility |
+| UI and prose (default) | **Hanken Grotesk** | Reference PDF font: tight headings, open body text |
+| Monospace | **JetBrains Mono** | Reference PDF font for section numbers; good code legibility |
 | Optional prose serif | **Source Serif 4** | For a Typora-style "book" reading theme |
-
-**Open:** confirm the families, or tell me the actual fonts the PDF was made
-with and I'll switch to them if the licence allows bundling.
 
 ### 3.2 Scale
 
@@ -405,8 +400,7 @@ table and can be overridden in a `keymap.toml`.
 
 ## 9. Open questions
 
-1. Fonts: confirm Hanken Grotesk / JetBrains Mono, or give the PDF's real fonts.
-2. Should H2 section numbering in the PDF style (`01`, `02` in accent mono) be
+1. Should H2 section numbering in the PDF style (`01`, `02` in accent mono) be
    on by default in View mode and exports, or opt-in?
-3. Edit mode default font: proportional (iA Writer style, proposed) or
+2. Edit mode default font: proportional (iA Writer style, proposed) or
    monospace?

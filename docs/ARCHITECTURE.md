@@ -181,11 +181,13 @@ fallback feature for machines without a usable GPU (and lower memory).
 
 - Library: **`gix` (gitoxide)**, pure Rust, for status, commit, tree writing,
   branches, tags, clone and fetch.
-  **Open risk:** `gix` push support has lagged behind the rest. If it's still
-  missing when we implement Sync, the options are (a) `git2` (libgit2, a C
-  dependency, vendored and statically linked) behind a feature flag for push
-  only, or (b) calling the system `git` binary for push if present. I'd pick
-  (a) to stay self-contained; this is the one place we might not be pure Rust.
+- Push: `gix` push support has lagged behind the rest. If it is still
+  missing when Sync is implemented, push goes through `git2` (libgit2), the
+  only non-Rust dependency, and only for push. It is **optional**: behind a
+  `push` cargo feature, isolated in `mdedit-git::push` behind a `PushBackend`
+  trait. Builds without it (or where libgit2 can't be used) run normally with
+  push disabled in the UI. Release builds enable the feature with libgit2
+  vendored and statically linked, so users never need to install it.
 - Autocommit: a debounced task per project; commits are written directly
   from the files on disk (no shelling out, no index lock held for long).
 - Checkpoint squash: builds one commit whose tree is the current tree and

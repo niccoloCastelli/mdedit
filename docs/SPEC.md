@@ -57,10 +57,10 @@ Status: draft v0.1 (2026-11-01). Visual and interaction rules are in
 
 - **Base:** CommonMark 0.31 via `pulldown-cmark`.
 - **Enabled extensions in v1:** tables, task lists, strikethrough, footnotes,
-  heading attributes (`{#id}`). Strictly speaking tables are not CommonMark
-  (they come from GitHub Flavored Markdown), but "easy table formatting" needs
-  them, so I've included them along with the other GFM features that
-  `pulldown-cmark` supports natively.
+  heading attributes (`{#id}`). Tables are not CommonMark (they come from
+  GitHub Flavored Markdown), but table editing needs them, so they are
+  enabled along with the other GFM features `pulldown-cmark` supports
+  natively.
 - **Later (v1.x), designed for now:** math (`pulldown-cmark`'s
   `ENABLE_MATH` gives inline/display math events; rendering via a pure-Rust
   TeX-to-shapes layer, see ARCHITECTURE 4.4) and Mermaid (fenced
@@ -110,9 +110,8 @@ my-notes/
     └── assets/
 ```
 
-**Open:** you described "one project file" alongside the sidecars. I put it in
-`.mdedit/project.toml` so templates and future project data have a home; the
-alternative is a single `.mdedit.toml` at the root.
+Project settings live in `.mdedit/project.toml` (decided 2026-11-01), so
+templates and future project data have a home next to it.
 
 ### 6.2 project.toml
 
@@ -150,9 +149,7 @@ default_template = "report"
 - **Autocommits are local until checkpointed.** Squashing rewrites history, so
   autocommits are never pushed. Sync pushes up to the last checkpoint only; if
   there are autocommits when you press Sync, the app asks for a checkpoint
-  name (with a default `Sync <date time>`) first.
-  **Open:** confirm this rule. The alternative is to push autocommits and
-  never squash anything already pushed.
+  name (with a default `Sync <date time>`) first. (Decided 2026-11-01.)
 - **Branches (v1):** create from current, switch, rename, delete (with
   confirmation). Switching with unsaved changes saves and autocommits first.
   The branch name is always visible in the status bar.
@@ -184,6 +181,9 @@ default_template = "report"
   banner asks to sync manually.
 - Manual **Sync** button: checkpoint if needed, pull (fast-forward or, in
   v1, refuse and explain when it would need a merge), push.
+- Push needs the libgit2 backend (ARCHITECTURE 7). When it is not available
+  the editor works normally and Sync only pulls; the push action is shown
+  disabled with a tooltip explaining why.
 - Credentials: SSH agent and SSH keys in `~/.ssh`; HTTPS via the git
   credential helper the system already has, and the OS keychain (`keyring`
   crate) for tokens entered in the app. The app never stores credentials in
@@ -300,9 +300,10 @@ file; changes apply live.
 
 ## 12. Open questions summary
 
-1. Project file location: `.mdedit/project.toml` (proposed) or `.mdedit.toml`.
-2. Autocommits stay local and only checkpoints are pushed (proposed), or
-   push autocommits too.
-3. Windows: large files are locked while mapped; acceptable?
-4. DOCX templates: TOML styles only in v1, `reference.docx` later?
-5. Design system questions in DESIGN_SYSTEM section 9.
+Decided on 2026-11-01: `.mdedit/project.toml`, local-only autocommits with
+checkpoint-only push, GFM tables, Hanken Grotesk + JetBrains Mono, libgit2
+only for push and optional.
+
+1. Windows: large files are locked while mapped; acceptable?
+2. DOCX templates: TOML styles only in v1, `reference.docx` later?
+3. Design system questions in DESIGN_SYSTEM section 9.
