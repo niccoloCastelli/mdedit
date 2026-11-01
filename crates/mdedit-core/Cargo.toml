@@ -9,6 +9,8 @@ license.workspace = true
 ropey.workspace = true
 pulldown-cmark.workspace = true
 thiserror.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
