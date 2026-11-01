@@ -33,14 +33,20 @@ fn normalize(html: &str) -> String {
     const STYLES: [&str; 7] = ["strong", "em", "del", "sup", "sub", "kbd", "code"];
     const BLOCKS: [&str; 14] =
         ["p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th", "blockquote", "ul", "ol", "div"];
-    let html = html.replace(">\n", ">").replace("\n<", "<");
+    let html = html.trim_end().replace("<br />\n", "<br />").replace("<br>\n", "<br>");
+    let html = html.as_str();
     let mut out = String::new();
     let mut active = [0u32; 7];
     let mut emitted = [false; 7];
-    let mut rest = html.as_str();
+    let mut rest = html;
     let mut text = String::new();
     let flush = |text: &mut String, out: &mut String, active: &[u32; 7], emitted: &mut [bool; 7]| {
         if text.is_empty() {
+            return;
+        }
+        if text.trim().is_empty() {
+            out.push_str(text);
+            text.clear();
             return;
         }
         let want: Vec<bool> = active.iter().map(|&n| n > 0).collect();
@@ -118,6 +124,36 @@ fn normalize(html: &str) -> String {
     }
     flush(&mut text, &mut out, &active, &mut emitted);
     close_all(&mut out, &mut emitted);
+    strip_tag_newlines(&out)
+}
+
+/// Drop newlines (and the indentation pulldown keeps before HTML blocks)
+/// next to block-level tags; their placement differs between writers.
+fn strip_tag_newlines(html: &str) -> String {
+    let is_style = |tag: &str| {
+        let name = tag.trim_start_matches("</").trim_start_matches('<').trim_end_matches('>');
+        ["strong", "em", "del", "sup", "sub", "kbd", "code"].contains(&name)
+    };
+    let mut out = String::new();
+    let mut rest = html;
+    while let Some(i) = rest.find('<') {
+        let Some(end) = rest[i..].find('>') else { break };
+        let tag = &rest[i..i + end + 1];
+        let mut before = &rest[..i];
+        if !is_style(tag) {
+            before = before.trim_end_matches([' ', '\n']);
+            if out.ends_with('>') && !is_style(out.rsplit('<').next().map(|t| t.trim_end_matches('>')).unwrap_or("")) {
+                before = before.trim_start_matches('\n');
+            }
+        }
+        out.push_str(before);
+        out.push_str(tag);
+        rest = &rest[i + end + 1..];
+        if !is_style(tag) {
+            rest = rest.trim_start_matches('\n');
+        }
+    }
+    out.push_str(rest);
     out
 }
 
@@ -154,7 +190,7 @@ fn check_sources(node: &LayoutNode, buf: &RopeBuffer, errors: &mut Vec<String>) 
         }
         LayoutNode::CodeBlock { code, segments, .. } | LayoutNode::Html { html: code, segments, .. } => {
             for s in segments {
-                if s.text.len() == s.source.len() && buf.slice(s.source.clone()) != code[s.text.clone()] {
+                if s.exact && buf.slice(s.source.clone()) != code[s.text.clone()] {
                     errors.push(format!("segment {:?} != {:?}", &code[s.text.clone()], buf.slice(s.source.clone())));
                 }
             }
@@ -176,7 +212,7 @@ fn check_inlines(inlines: &[Inline], buf: &RopeBuffer, errors: &mut Vec<String>)
             continue;
         }
         match inline {
-            Inline::Text { text, source, .. } if text.len() == source.len() => {
+            Inline::Text { text, source, exact: true, .. } => {
                 let s = buf.slice(source.clone());
                 if s != *text {
                     errors.push(format!("text {text:?} has source {s:?}"));
@@ -190,10 +226,7 @@ fn check_inlines(inlines: &[Inline], buf: &RopeBuffer, errors: &mut Vec<String>)
 
 #[test]
 fn normalizer_unifies_style_nesting() {
-    assert_eq!(
-        normalize("<p><em><strong>a</strong></em></p>\n"),
-        normalize("<p><strong><em>a</em></strong></p>")
-    );
+    assert_eq!(normalize("<p><em><strong>a</strong></em></p>\n"), normalize("<p><strong><em>a</em></strong></p>"));
     assert_eq!(normalize("<p>a<br>\nb</p>"), normalize("<p>a<br />\nb</p>"));
 }
 

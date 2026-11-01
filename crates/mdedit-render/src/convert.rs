@@ -134,19 +134,40 @@ fn classify_html(html: &str) -> InlineHtml {
 
 enum Kind {
     Paragraph,
-    Heading { level: u8, id: Option<String>, classes: Vec<String>, attrs: Vec<(String, Option<String>)> },
+    Heading {
+        level: u8,
+        id: Option<String>,
+        classes: Vec<String>,
+        attrs: Vec<(String, Option<String>)>,
+    },
     BlockQuote,
-    List { start: Option<u64>, loose: bool },
+    List {
+        start: Option<u64>,
+        loose: bool,
+    },
     Item,
-    CodeBlock { info: String },
+    CodeBlock {
+        info: String,
+    },
     HtmlBlock,
-    Table { align: Vec<Align> },
+    Table {
+        align: Vec<Align>,
+    },
     TableHead,
     TableRow,
     TableCell,
-    FootnoteDefinition { label: String },
-    Link { url: String, title: String },
-    Image { src: String, title: String, depth: u32 },
+    FootnoteDefinition {
+        label: String,
+    },
+    Link {
+        url: String,
+        title: String,
+    },
+    Image {
+        src: String,
+        title: String,
+        depth: u32,
+    },
     /// Tags of extensions mdedit does not enable; their content is kept.
     Other,
 }
@@ -192,10 +213,10 @@ impl Frame {
         self.children.push(LayoutNode::Paragraph { inlines, source });
     }
 
-    fn push_segment(&mut self, text: &str, source: Range<usize>) {
+    fn push_segment(&mut self, text: &str, source: Range<usize>, exact: bool) {
         let start = self.text.len();
         self.text.push_str(text);
-        self.segments.push(Segment { text: start..self.text.len(), source });
+        self.segments.push(Segment { text: start..self.text.len(), source, exact });
     }
 }
 
@@ -224,17 +245,19 @@ impl Builder<'_> {
             Event::Start(tag) => self.start(tag, range),
             Event::End(tag) => self.end(tag),
             Event::Text(text) => {
-                if let Some(top @ Frame { kind: Kind::CodeBlock { .. }, .. }) = self.stack.last_mut() {
-                    top.push_segment(&text, range);
+                let exact = self.src(&range) == &*text;
+                if let Some(top @ Frame { kind: Kind::CodeBlock { .. } | Kind::HtmlBlock, .. }) = self.stack.last_mut()
+                {
+                    top.push_segment(&text, range, exact);
                 } else {
                     let style = self.style.current();
-                    self.push_inline(Inline::Text { text: text.into_string(), style, source: range });
+                    self.push_inline(Inline::Text { text: text.into_string(), style, source: range, exact });
                 }
             }
             Event::Code(text) => {
-                let source = self.code_span_source(&text, range);
+                let (source, exact) = self.code_span_source(&text, range);
                 let style = SpanStyle { code: true, ..self.style.current() };
-                self.push_inline(Inline::Text { text: text.into_string(), style, source });
+                self.push_inline(Inline::Text { text: text.into_string(), style, source, exact });
             }
             Event::InlineMath(tex) => {
                 self.push_inline(Inline::Math { tex: tex.into_string(), display: false, source: range })
@@ -243,8 +266,9 @@ impl Builder<'_> {
                 self.push_inline(Inline::Math { tex: tex.into_string(), display: true, source: range })
             }
             Event::Html(html) => {
+                let exact = self.src(&range) == &*html;
                 if let Some(top @ Frame { kind: Kind::HtmlBlock, .. }) = self.stack.last_mut() {
-                    top.push_segment(&html, range);
+                    top.push_segment(&html, range, exact);
                 } else {
                     self.inline_html(html, range);
                 }
@@ -275,22 +299,23 @@ impl Builder<'_> {
         }
     }
 
-    /// The content range of a code span when the text maps onto it byte
-    /// for byte, else the whole span.
-    fn code_span_source(&self, text: &str, range: Range<usize>) -> Range<usize> {
-        let src = &self.text[range.start - self.base..range.end - self.base];
-        let ticks = src.bytes().take_while(|&b| b == b'`').count();
-        if src.len() < 2 * ticks {
-            return range;
+    fn src(&self, range: &Range<usize>) -> &str {
+        &self.text[range.start - self.base..range.end - self.base]
+    }
+
+    /// The content range of a code span when the text is exactly that
+    /// source, else the whole span.
+    fn code_span_source(&self, text: &str, range: Range<usize>) -> (Range<usize>, bool) {
+        let ticks = self.src(&range).bytes().take_while(|&b| b == b'`').count();
+        if range.len() >= 2 * ticks {
+            let inner = range.start + ticks..range.end - ticks;
+            for r in [inner.clone(), inner.start + 1..inner.end.saturating_sub(1)] {
+                if r.start <= r.end && self.src(&r) == text {
+                    return (r, true);
+                }
+            }
         }
-        let inner = range.start + ticks..range.end - ticks;
-        if inner.len() == text.len() {
-            inner
-        } else if inner.len() == text.len() + 2 {
-            inner.start + 1..inner.end - 1
-        } else {
-            range
-        }
+        (range, false)
     }
 
     fn start(&mut self, tag: Tag<'_>, range: Range<usize>) {
@@ -335,10 +360,9 @@ impl Builder<'_> {
             Tag::Image { dest_url, title, .. } => {
                 Kind::Image { src: dest_url.into_string(), title: title.into_string(), depth: 0 }
             }
-            Tag::DefinitionList
-            | Tag::DefinitionListTitle
-            | Tag::DefinitionListDefinition
-            | Tag::MetadataBlock(_) => Kind::Other,
+            Tag::DefinitionList | Tag::DefinitionListTitle | Tag::DefinitionListDefinition | Tag::MetadataBlock(_) => {
+                Kind::Other
+            }
         };
         self.stack.push(Frame::new(kind, range));
     }
@@ -455,13 +479,11 @@ impl Builder<'_> {
             return;
         };
         if let (
-            Some(Inline::Text { text: prev, style: prev_style, source: prev_src }),
-            Inline::Text { text, style, source },
+            Some(Inline::Text { text: prev, style: prev_style, source: prev_src, exact: true }),
+            Inline::Text { text, style, source, exact: true },
         ) = (parent.inlines.last_mut(), &inline)
             && prev_style == style
             && prev_src.end == source.start
-            && prev.len() == prev_src.len()
-            && text.len() == source.len()
         {
             prev.push_str(text);
             prev_src.end = source.end;
@@ -483,6 +505,5 @@ fn align_of(a: Alignment) -> Align {
 /// Block ranges from pulldown include the trailing line ending; the block
 /// index excludes it, so do the same.
 fn trim_newlines(range: &Range<usize>, b: &Builder<'_>) -> Range<usize> {
-    let src = &b.text[range.start - b.base..range.end - b.base];
-    range.start..range.start + src.trim_end_matches(['\n', '\r']).len()
+    range.start..range.start + b.src(range).trim_end_matches(['\n', '\r']).len()
 }

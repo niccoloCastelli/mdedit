@@ -3,7 +3,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mdedit_core::parse::markdown_options;
+use mdedit_core::parse::{BlockIndex, markdown_options};
+use mdedit_core::{BlockKind, TextBuffer};
 use pulldown_cmark::{Event, Parser, Tag};
 
 /// Target of a link reference definition.
@@ -79,6 +80,41 @@ impl RefTable {
 impl LinkResolver for RefTable {
     fn link_ref(&self, label: &str) -> Option<LinkDef> {
         self.links.get(&normalize_label(label)).cloned()
+    }
+
+    fn has_footnote(&self, label: &str) -> bool {
+        self.footnotes.contains(&normalize_label(label))
+    }
+}
+
+/// Definitions from a live [`BlockIndex`]: link references from its side
+/// table, footnote labels from its top-level footnote definition blocks.
+/// Rebuild it when the index changes (cheap: one pass over the blocks).
+pub struct IndexRefs<'a> {
+    index: &'a BlockIndex,
+    footnotes: HashSet<String>,
+}
+
+impl<'a> IndexRefs<'a> {
+    pub fn new(index: &'a BlockIndex, buf: &dyn TextBuffer) -> Self {
+        let footnotes = index
+            .blocks()
+            .iter()
+            .filter(|b| b.kind == BlockKind::FootnoteDefinition)
+            .filter_map(|b| {
+                let head = buf.line(buf.byte_to_line(b.bytes.start));
+                let label = head.trim_start().strip_prefix("[^")?;
+                Some(normalize_label(&label[..label.find("]:")?]))
+            })
+            .collect();
+        Self { index, footnotes }
+    }
+}
+
+impl LinkResolver for IndexRefs<'_> {
+    fn link_ref(&self, label: &str) -> Option<LinkDef> {
+        let r = self.index.link_ref(label)?;
+        Some(LinkDef { dest: r.dest.clone(), title: r.title.clone().unwrap_or_default() })
     }
 
     fn has_footnote(&self, label: &str) -> bool {

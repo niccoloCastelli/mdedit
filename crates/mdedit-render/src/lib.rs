@@ -24,7 +24,7 @@ use std::ops::Range;
 
 use mdedit_core::{Block, BlockKind, TextBuffer};
 
-pub use refs::{LinkDef, LinkResolver, RefTable, normalize_label};
+pub use refs::{IndexRefs, LinkDef, LinkResolver, RefTable, normalize_label};
 
 /// Inline style flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,17 +38,17 @@ pub struct SpanStyle {
     pub kbd: bool,
 }
 
-/// Inline content. `source` is the markup range in the document; for
-/// [`Inline::Text`] it is the range of the text itself when
-/// `source.len() == text.len()` (the text maps byte for byte), otherwise
-/// (entities, escapes, line endings in code spans) only its ends are
-/// meaningful.
+/// Inline content. `source` is the markup range in the document.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text {
         text: String,
         style: SpanStyle,
         source: Range<usize>,
+        /// The source is exactly `text`, so positions map byte for byte.
+        /// Otherwise (entities, escapes, line endings in code spans) only
+        /// the ends of `source` are meaningful.
+        exact: bool,
     },
     Link {
         url: String,
@@ -154,13 +154,14 @@ pub struct TableRow {
 
 /// A run of text in a code or HTML block and where it came from. Line
 /// prefixes of containers (`> `, list indentation) are not part of the text,
-/// so a block is a list of segments; each maps byte for byte when
-/// `text.len() == source.len()`.
+/// so a block is a list of segments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
     /// Range in the block's `code` / `html` string.
     pub text: Range<usize>,
     pub source: Range<usize>,
+    /// The source is exactly the text (maps byte for byte).
+    pub exact: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,7 +303,11 @@ pub fn layout_block_with(block: &Block, buf: &dyn TextBuffer, ctx: &LayoutContex
             let line_start = buf.line_to_byte(buf.byte_to_line(block.bytes.start));
             let prefix = buf.slice(line_start..block.bytes.start);
             let base = if prefix.bytes().all(|b| b == b' ' || b == b'\t') { line_start } else { block.bytes.start };
-            let text = buf.slice(base..block.bytes.end);
+            // The index leaves out the block's final line ending; code blocks
+            // need it (their text ends with a newline).
+            let tail = buf.slice(block.bytes.end..(block.bytes.end + 2).min(buf.len_bytes()));
+            let eol = if tail.starts_with("\r\n") { 2 } else { usize::from(tail.starts_with(['\n', '\r'])) };
+            let text = buf.slice(base..block.bytes.end + eol);
             let has_inlines = !matches!(
                 block.kind,
                 BlockKind::CodeBlock { .. }

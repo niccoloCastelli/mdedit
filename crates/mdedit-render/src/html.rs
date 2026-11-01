@@ -28,7 +28,9 @@ struct Writer {
     footnotes: HashMap<String, usize>,
 }
 
-const TAGS: [(fn(&SpanStyle) -> bool, &str); 7] = [
+type StyleTag = (fn(&SpanStyle) -> bool, &'static str);
+
+const TAGS: [StyleTag; 7] = [
     (|s| s.strong, "strong"),
     (|s| s.emphasis, "em"),
     (|s| s.strikethrough, "del"),
