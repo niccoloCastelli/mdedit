@@ -25,6 +25,8 @@ use crate::settings::{AppearanceMode, Mode, Paths, Settings};
 use crate::tab::{DiskStamp, External, Handoff, Tab, TabId};
 use crate::watch;
 
+pub mod project;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTab {
     Files,
@@ -153,6 +155,9 @@ pub enum Message {
     /// Synthetic keystroke for `MDEDIT_TRACE_TYPE`.
     TraceType,
     Parsed(TabId, Handoff<mdedit_core::parse::ParseResult>),
+    /// Project mode and git (`project.rs`).
+    Project(project::Msg),
+    OpenFolder(PathBuf),
     Export(ExportMsg),
 }
 
@@ -241,6 +246,10 @@ pub struct App {
     pub stats: Vec<(TabId, u64, Stats)>,
     stats_pending: Vec<TabId>,
     stats_spawned: Option<Instant>,
+    /// The open project folder (`project.rs`).
+    pub project: Option<project::ProjectState>,
+    /// Text-input dialog of the project and git commands.
+    pub prompt: Option<project::Prompt>,
 }
 
 #[derive(Debug, Default)]
@@ -320,6 +329,8 @@ impl App {
             stats: Vec::new(),
             stats_pending: Vec::new(),
             stats_spawned: None,
+            project: None,
+            prompt: None,
         };
         app.load_themes();
         app.apply_theme();
@@ -346,6 +357,9 @@ impl App {
         }
         if let Some(last) = args.last() {
             app.restore_active = Some(absolute(last));
+        }
+        if let Some(dir) = app.session.project.clone().filter(|d| d.is_dir()) {
+            tasks.push(Task::done(Message::OpenFolder(dir)));
         }
         if to_open.is_empty() {
             app.new_untitled();
@@ -488,6 +502,7 @@ impl App {
             iced::system::theme_changes().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
             watch::changes(self.watched_paths()).map(Message::FileChanged),
         ];
+        subs.extend(self.project_subscriptions());
         let stats_stale = self
             .active_tab()
             .is_some_and(|t| !self.stats.iter().any(|(id, v, _)| *id == t.id && *v == t.doc.buffer().version()));
@@ -533,7 +548,7 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let focus_key = |a: &Self| {
             let menu = a.menu_open.is_some() || a.context_menu.is_some() || a.toolbar.visible;
-            let dialog = a.dialog.is_some() || a.export.dialog.is_some();
+            let dialog = a.modal_open();
             (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), dialog, menu)
         };
         let before = focus_key(self);
@@ -572,6 +587,8 @@ impl App {
                 return self.run(id);
             }
             Message::Key { key, modifiers, captured } => return self.on_key(key, modifiers, captured),
+            Message::Project(m) => return self.on_project(m),
+            Message::OpenFolder(dir) => return self.open_folder(dir),
             Message::MenuOpen(m) => self.menu_open = if self.menu_open == m { None } else { m },
             Message::ContextMenu(p) => {
                 self.menu_open = None;
@@ -892,6 +909,10 @@ impl App {
             if self.dialog.is_some() {
                 return self.on_dialog(DialogChoice::Cancel);
             }
+            self.prompt = None;
+            if let Some(p) = &mut self.project {
+                p.history = None;
+            }
             return Task::none();
         }
         if self.palette.is_some() {
@@ -907,6 +928,12 @@ impl App {
                 }
                 return Task::none();
             }
+        }
+        if self.prompt.is_some() {
+            if key == Key::Named(Named::Enter) && !captured {
+                return self.on_project(project::Msg::Prompt(project::PromptMsg::Submit));
+            }
+            return Task::none();
         }
         if self.dialog.is_some() {
             if key == Key::Named(Named::Enter) && !captured {
@@ -1050,6 +1077,10 @@ impl App {
                     iced::widget::operation::focus(SEARCH_INPUT),
                     iced::widget::operation::select_all(SEARCH_INPUT),
                 ]);
+            }
+            OpenFolder | CloseFolder | ProjectNewFile | ProjectNewFolder | Checkpoint | Sync | NewBranch
+            | FileHistory => {
+                return self.project_command(cmd);
             }
             ModeEdit => self.set_mode(Mode::Edit),
             ModeSplit => self.set_mode(Mode::Split),
@@ -1315,7 +1346,7 @@ impl App {
         result: Result<Handoff<Option<mdedit_core::mapped::Remap>>, String>,
     ) -> Task<Message> {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
-        match result {
+        let after = match result {
             Ok(remap) => {
                 let was = tab.doc.path.clone();
                 tab.finish_save(path.clone(), point, remap.take().flatten());
@@ -1326,6 +1357,7 @@ impl App {
                 if path == self.paths.settings() || path == self.paths.keymap() {
                     self.reload_config();
                 }
+                self.project_saved(&path)
             }
             Err(e) => {
                 tab.saving = false;
@@ -1334,7 +1366,7 @@ impl App {
                 self.close_after_save.retain(|t| *t != id);
                 return Task::none();
             }
-        }
+        };
         if let Some(i) = self.close_after_save.iter().position(|t| *t == id) {
             self.close_after_save.remove(i);
             if let Some(idx) = self.tab_index(id) {
@@ -1342,9 +1374,9 @@ impl App {
             }
         }
         if self.quitting {
-            return self.continue_quit();
+            return Task::batch([after, self.continue_quit()]);
         }
-        Task::none()
+        after
     }
 
     fn request_close(&mut self, id: TabId) -> Task<Message> {
@@ -1413,6 +1445,7 @@ impl App {
         if let Some(t) = &self.trace {
             t.report();
         }
+        self.project_flush();
         self.save_session();
         iced::exit()
     }
@@ -1445,6 +1478,7 @@ impl App {
         s.sidebar_tab = self.sidebar.tab.key().into();
         s.sidebar_width = self.sidebar.width;
         s.comments_visible = self.comments_visible;
+        s.project = self.project_root().map(Path::to_path_buf);
         s
     }
 
@@ -1560,6 +1594,15 @@ impl App {
             Action::SelectionRect(_) => {}
         }
         Task::none()
+    }
+
+    /// A dialog-like layer is open: the document takes no keys.
+    pub fn modal_open(&self) -> bool {
+        self.dialog.is_some()
+            || self.export.dialog.is_some()
+            || self.prompt.is_some()
+            || self.palette.is_some()
+            || self.project.as_ref().is_some_and(|p| p.history.is_some())
     }
 
     pub fn palette_items(&self) -> Vec<palette::Item> {

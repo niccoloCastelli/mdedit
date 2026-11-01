@@ -21,6 +21,14 @@ pub enum Command {
 pub enum AppCommand {
     NewFile,
     Open,
+    OpenFolder,
+    CloseFolder,
+    ProjectNewFile,
+    ProjectNewFolder,
+    Checkpoint,
+    Sync,
+    NewBranch,
+    FileHistory,
     Save,
     SaveAs,
     SaveAll,
@@ -92,6 +100,14 @@ macro_rules! app_commands {
 app_commands! {
     NewFile, "file.new", "New File", Some("file-plus"), Some("Ctrl+N");
     Open, "file.open", "Open File…", Some("folder-open"), Some("Ctrl+O");
+    OpenFolder, "file.open_folder", "Open Folder…", Some("folder-open"), None;
+    CloseFolder, "file.close_folder", "Close Folder", None, None;
+    ProjectNewFile, "project.new_file", "New File in Project…", Some("file-plus"), None;
+    ProjectNewFolder, "project.new_folder", "New Folder…", Some("folder-plus"), None;
+    Checkpoint, "git.checkpoint", "Checkpoint…", Some("tag"), Some("Ctrl+Alt+S");
+    Sync, "git.sync", "Sync", Some("refresh-cw"), None;
+    NewBranch, "git.new_branch", "New Branch…", Some("git-branch"), None;
+    FileHistory, "git.file_history", "File History", Some("rotate-ccw-clock"), Some("Ctrl+Alt+H");
     Save, "file.save", "Save", Some("save"), Some("Ctrl+S");
     SaveAs, "file.save_as", "Save As…", None, Some("Ctrl+Shift+S");
     SaveAll, "file.save_all", "Save All", None, None;
@@ -190,6 +206,7 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
             &[
                 Some("file.new"),
                 Some("file.open"),
+                Some("file.open_folder"),
                 Some("view.quick_open"),
                 None,
                 Some("file.save"),
@@ -200,6 +217,7 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("file.export_docx"),
                 None,
                 Some("file.close_tab"),
+                Some("file.close_folder"),
                 Some("file.quit"),
             ],
         ),
@@ -283,7 +301,21 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("view.appearance_dark"),
             ],
         ),
-        ("Project", &[Some("view.show_files"), Some("view.show_git")]),
+        (
+            "Project",
+            &[
+                Some("project.new_file"),
+                Some("project.new_folder"),
+                None,
+                Some("git.checkpoint"),
+                Some("git.sync"),
+                Some("git.new_branch"),
+                Some("git.file_history"),
+                None,
+                Some("view.show_files"),
+                Some("view.show_git"),
+            ],
+        ),
         ("Help", &[Some("app.open_settings"), Some("app.open_keymap"), None, Some("help.about")]),
     ]
 }

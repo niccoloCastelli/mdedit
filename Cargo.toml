@@ -70,6 +70,8 @@ gix = { version = "0.90", default-features = false, features = [
     "blocking-http-transport-reqwest-rust-tls",
 ] }
 git2 = { version = "0.21", default-features = false }
+# Line diffs for the history view (mdedit-app).
+similar = "2"
 keyring = "4"
 
 # Export

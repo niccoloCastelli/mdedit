@@ -20,6 +20,8 @@ use crate::settings::Mode;
 use crate::style::{self, Btn, c};
 use crate::tab::{External, Tab};
 
+mod project_view;
+
 const UI: f32 = 13.0;
 const UI_SMALL: f32 = 12.0;
 const EYEBROW: f32 = 11.0;
@@ -81,8 +83,14 @@ impl App {
         if self.palette.is_some() {
             layers.push(self.palette_view());
         }
+        if let Some(h) = self.project.as_ref().and_then(|p| p.history.as_ref()) {
+            layers.push(self.history_view(h));
+        }
         if let Some(d) = &self.dialog {
             layers.push(self.dialog_view(d));
+        }
+        if let Some(p) = &self.prompt {
+            layers.push(self.prompt_view(p));
         }
         layers.extend(self.export_layers());
         if !self.toasts.is_empty() {
@@ -184,6 +192,9 @@ impl App {
 
     /// Cut and copy need a selection; edits need a writable document.
     fn menu_enabled(&self, id: &str) -> bool {
+        if let Some(on) = self.project_command_enabled(id) {
+            return on;
+        }
         let Some(tab) = self.active_tab() else { return true };
         match id {
             "edit.cut" => !tab.selection().is_empty() && tab.editable(),
@@ -349,7 +360,8 @@ impl App {
         if let Some(b) = self.banner(tab) {
             col = col.push(container(b).padding(Padding::from([SPACE_2, SPACE_4])));
         }
-        let body = crate::context::context_area(self.document_body(tab), |p| Message::ContextMenu(Some(p)));
+        let body = crate::context::context_area(self.document_body(tab), |p| Message::ContextMenu(Some(p)))
+            .keys_blocked(self.modal_open());
         col.push(body).width(Length::Fill).height(Length::Fill).into()
     }
 
@@ -448,7 +460,7 @@ impl App {
             SidebarTab::Files => self.files_panel(),
             SidebarTab::Outline => self.outline_panel(),
             SidebarTab::Search => self.search_panel(),
-            SidebarTab::Git => placeholder(t, "Branches, history and checkpoints appear here in project mode."),
+            SidebarTab::Git => self.git_panel(),
         };
         container(
             column![
@@ -470,6 +482,9 @@ impl App {
 
     fn files_panel(&self) -> Element<'_, Message> {
         let t = &self.theme;
+        if let Some(tree) = self.project_files_panel() {
+            return tree;
+        }
         let mut col = column![
             text("Open a folder as a project to browse its files. Recent files:")
                 .size(UI_SMALL)
@@ -572,6 +587,10 @@ impl App {
         let muted = c(t, T::TextMuted);
         let mut left = row![].spacing(SPACE_3).align_y(Alignment::Center);
         let mut right = row![].spacing(SPACE_3).align_y(Alignment::Center);
+        let (branch, git_state) = self.project_status();
+        if let Some(b) = branch {
+            left = left.push(b);
+        }
         if let Some(tab) = self.active_tab() {
             let (label, color) = if tab.saving {
                 ("saving…", muted)
@@ -583,6 +602,9 @@ impl App {
                 ("new file", muted)
             };
             left = left.push(text(label).size(UI_SMALL).color(color));
+            if let Some(g) = git_state {
+                left = left.push(g);
+            }
             if tab.read_only() {
                 left = left.push(text("read-only").size(UI_SMALL).color(c(t, T::WarningText)));
             }
