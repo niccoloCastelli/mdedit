@@ -66,8 +66,18 @@ the buffer directly.
 ### 3.1 Block index
 
 `Document` owns the buffer and a **block index**: an ordered list of top-level
-blocks (`kind`, byte range, line range, a parse generation), stored in a
-B-tree keyed by byte offset so it can be shifted by edits in O(log n).
+blocks (`kind`, byte range, a parse generation), stored so it can be shifted
+by edits in O(log n): leaves of about 64 blocks with leaf-relative offsets,
+and Fenwick trees over the leaves' byte spans and block counts (lookup by
+byte or by block number is O(log n) too). Line ranges are not stored; the
+buffer maps bytes to lines.
+
+Because of this storage, `BlockIndex::blocks()` returns a `Blocks` view
+(`len`, `get(i)`, `iter()`) that yields `Block`s **by value** with absolute
+ranges, and `blocks_in(range)` returns an iterator; there is no `&[Block]`
+slice. A block that a reparse reproduces unchanged keeps its generation, so
+render caches survive edits elsewhere. `last_change()` names the reparsed
+block range and the link labels whose definition changed.
 
 ### 3.2 Incremental reparse
 
@@ -89,10 +99,25 @@ granularity:
 4. Link reference definitions are document-global: they are collected in a
    side table; a change to one invalidates only the blocks that use that label.
 
-A typical keystroke reparses one paragraph (microseconds). Parsing runs on the
-UI thread for small windows and on a worker (`tokio::task::spawn_blocking`)
-when the window exceeds 64 KB, with the previous result shown until the new
-one arrives.
+As implemented: the window grows by doubling the number of old blocks it
+covers, so opening a fence near the top of a big file costs O(log n) parse
+attempts, not one per block. The window also steps back over link reference
+definitions on the lines just before it, since those make the next lines a
+paragraph continuation rather than a fresh start. A proptest of random edit
+sequences and every CommonMark 0.31.2 spec example (typed, pasted, deleted)
+check the result against a full parse.
+
+A typical keystroke reparses one paragraph (about 12 µs on a 10 MB file,
+`cargo bench -p mdedit-core --bench parse`). Parsing runs on the UI thread
+for small windows and on a worker when the window exceeds 64 KB, with the
+previous result shown until the new one arrives: the index keeps the old
+blocks shifted and marks the region pending; the app takes the job with
+`Document::take_parse_job()`, runs `ParseJob::run()` on
+`tokio::task::spawn_blocking`, and hands the result to
+`Document::finish_parse()` (a result for an older version is dropped and the
+next job covers the newer edits). `BlockIndex::deferred(buf)` opens a
+document with the whole parse as such a job (a full parse of 10 MB takes a
+few hundred milliseconds).
 
 **Fallback plan:** if block-level reparse proves fragile, switch to
 `tree-sitter-md` (true incremental parsing) for structure and keep
@@ -103,7 +128,11 @@ swap is internal to `mdedit-core::parse`.
 
 Large files have no block index. Edit mode styles each visible line with a
 line-local tokenizer (headings, emphasis, code spans, fence state carried from
-the previous visible line on a best-effort basis).
+the previous visible line on a best-effort basis): `highlight_line(line,
+&mut LineState)`. Parsed documents use `highlight_lines(index, buf, lines)`,
+the same tokenizer with block context from the index (code, HTML, setext
+headings, tables), so a viewport can start mid-block. `scan_outline(buf)`
+builds the large-file outline from a line scan.
 
 ## 4. Rendering
 

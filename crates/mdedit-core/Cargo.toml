@@ -18,3 +18,7 @@ criterion.workspace = true
 [[bench]]
 name = "buffer"
 harness = false
+
+[[bench]]
+name = "parse"
+harness = false

@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d8b89ad2ba82aa858d64668feb45638eb3f1375ce27460c1f885ae7b950113c2 # shrinks to doc = "\n\n-->\n\n\n\n</pre>para\n\n\n# h\n\n\n\nparapara## h2 {#id}\nmore textmore text\n", edits = [EditSpec { at: 0.20356008875388037, len: 0.2784910466683402, text: "\n" }], flush_every = 1
+cc 22786546403600aec32758cb423dd49b5ced80f298bb842d35c5b49bfc7e22df # shrinks to doc = "\n\n\n\n\nmore text\n```rust- itemmore textparapara\n\n[Y]:\n/w<div>>\n    code> quote\n\n\n\n>===>\n\n\n\n\npara\n- item| a | b |\n\n\nparapara\n\n", edits = [EditSpec { at: 0.5290096720942343, len: 0.27110565579718626, text: "" }, EditSpec { at: 0.0, len: 0.2580830187924423, text: "" }, EditSpec { at: 0.9446517016587862, len: 0.0, text: "" }]
+cc 0c32ab761662b15e984f86d3d432081e4de67a850b4d5398fc13931e28b4737a # shrinks to n = 347, edits = [EditSpec { at: 0.2672375366839219, len: 0.08789776616529556, text: "" }, EditSpec { at: 0.221978093462209, len: 0.0, text: "2) two" }, EditSpec { at: 0.2238390238419898, len: 0.0, text: "" }]
+cc be02199319f3ed2b88e03c8b78684c53abdd42d9b12b03fa219e32d011159583 # shrinks to doc = "    code\nparaparaparamore text\n\n\npara\nmore text\npara\n\n[Y]:\n/w", edits = [EditSpec { at: 0.7273849872554076, len: 0.2864537463380374, text: "" }], flush_every = 1
