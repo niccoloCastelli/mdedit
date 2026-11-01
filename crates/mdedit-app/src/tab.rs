@@ -92,6 +92,12 @@ impl Tab {
         self.doc.format.read_only || self.doc.mapped().and_then(|m| m.utf8_valid()) == Some(false)
     }
 
+    /// Whether edits are accepted: not a read-only file, and not View mode
+    /// switched to view only.
+    pub fn editable(&self) -> bool {
+        !self.read_only() && !(self.mode == Mode::View && self.view.read_only)
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.doc.is_dirty()
     }

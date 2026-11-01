@@ -39,6 +39,7 @@ pub enum AppCommand {
     ModeView,
     CycleMode,
     ToggleSidebar,
+    ToggleViewOnly,
     ToggleComments,
     ShowFiles,
     ShowOutline,
@@ -106,6 +107,7 @@ app_commands! {
     ModeSplit, "view.mode_split", "Split Mode", Some("columns-2"), Some("Ctrl+2");
     ModeView, "view.mode_view", "View Mode", Some("eye"), Some("Ctrl+3");
     CycleMode, "view.cycle_mode", "Cycle Mode", None, Some("Ctrl+E");
+    ToggleViewOnly, "view.toggle_view_only", "View Only (No Editing)", Some("lock"), None;
     ToggleSidebar, "view.toggle_sidebar", "Toggle Sidebar", Some("panel-left"), Some("Ctrl+Shift+B");
     ToggleComments, "view.toggle_comments", "Toggle Comments Panel", Some("message-square"), Some("Ctrl+Alt+M");
     ShowFiles, "view.show_files", "Show Files", Some("files"), None;
@@ -256,6 +258,7 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("view.mode_edit"),
                 Some("view.mode_split"),
                 Some("view.mode_view"),
+                Some("view.toggle_view_only"),
                 Some("view.cycle_mode"),
                 None,
                 Some("view.toggle_sidebar"),
