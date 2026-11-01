@@ -3327,6 +3327,7 @@ dependencies = [
  "iced_runtime",
  "iced_widget",
  "iced_winit",
+ "image",
  "thiserror 2.0.21",
 ]
 
@@ -3386,6 +3387,8 @@ dependencies = [
  "half",
  "iced_core",
  "iced_futures",
+ "image",
+ "kamadak-exif",
  "log",
  "lyon_path",
  "raw-window-handle",
@@ -4444,9 +4447,13 @@ name = "mdedit-view"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "image",
  "mdedit-core",
+ "mdedit-editor",
  "mdedit-render",
  "mdedit-theme",
+ "tempfile",
+ "unicode-segmentation",
 ]
 
 [[package]]
