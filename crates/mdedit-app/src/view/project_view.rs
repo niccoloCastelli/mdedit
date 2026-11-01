@@ -52,6 +52,7 @@ impl App {
             tool(t, "folder-plus", "New folder", Some(pm(Msg::NewFolder))),
             tool(t, "pencil", "Rename or move", has_selection.then(|| pm(Msg::Rename))),
             tool(t, "trash", "Delete", has_selection.then(|| pm(Msg::Delete))),
+            tool(t, "x", "Close project", Some(Message::Run("file.close_folder"))),
         ]
         .spacing(2)
         .align_y(Alignment::Center)

@@ -286,7 +286,8 @@ impl App {
         let session = if settings.files.restore_session {
             Session::load(&paths.session()).unwrap_or_default()
         } else {
-            Session { recent: Session::load(&paths.session()).unwrap_or_default().recent, ..Default::default() }
+            let old = Session::load(&paths.session()).unwrap_or_default();
+            Session { recent: old.recent, recent_projects: old.recent_projects, ..Default::default() }
         };
         let fresh = session.tabs.is_empty() && session.sidebar_width == 0.0;
         let mut app = Self {
@@ -356,16 +357,27 @@ impl App {
             iced::widget::operation::focus(EDITOR),
         ];
         let threshold = app.settings.files.large_file_threshold();
+        let args: Vec<PathBuf> = std::env::args_os().skip(1).map(|a| absolute(Path::new(&a))).collect();
+        // Files opened from outside the last project (file manager, command
+        // line) open on their own: the project and its tabs stay closed.
+        if let Some(dir) = app.session.project.clone()
+            && !args.is_empty()
+            && !args.iter().any(|a| a.starts_with(&dir))
+        {
+            app.session.project = None;
+            app.restoring.retain(|t| !t.path.starts_with(&dir));
+            if app.restore_active.as_ref().is_some_and(|p| p.starts_with(&dir)) {
+                app.restore_active = None;
+            }
+        }
         let mut to_open: Vec<PathBuf> = app.restoring.iter().map(|t| t.path.clone()).collect();
-        let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-        for a in &args {
-            let p = absolute(a);
-            if !to_open.contains(&p) {
-                to_open.push(p);
+        for p in &args {
+            if !to_open.contains(p) {
+                to_open.push(p.clone());
             }
         }
         if let Some(last) = args.last() {
-            app.restore_active = Some(absolute(last));
+            app.restore_active = Some(last.clone());
         }
         if let Some(dir) = app.session.project.clone().filter(|d| d.is_dir()) {
             tasks.push(Task::done(Message::OpenFolder(dir)));
@@ -1108,8 +1120,8 @@ impl App {
                     iced::widget::operation::select_all(SEARCH_INPUT),
                 ]);
             }
-            OpenFolder | CloseFolder | ProjectNewFile | ProjectNewFolder | Checkpoint | Sync | NewBranch
-            | FileHistory => {
+            OpenFolder | OpenRecentProject | CloseFolder | ProjectNewFile | ProjectNewFolder | Checkpoint | Sync
+            | NewBranch | FileHistory => {
                 return self.project_command(cmd);
             }
             ModeEdit => self.set_mode(Mode::Edit),
@@ -1377,7 +1389,7 @@ impl App {
         result: Result<Handoff<Option<mdedit_core::mapped::Remap>>, String>,
     ) -> Task<Message> {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
-        let after = match result {
+        let mut after = match result {
             Ok(remap) => {
                 let was = tab.doc.path.clone();
                 tab.finish_save(path.clone(), point, remap.take().flatten());
@@ -1404,6 +1416,7 @@ impl App {
             if let Some(idx) = self.tab_index(id) {
                 self.close_tab_now(idx);
             }
+            after = Task::batch([after, self.finish_close_project()]);
         }
         if self.quitting {
             return Task::batch([after, self.continue_quit()]);
@@ -1688,6 +1701,17 @@ impl App {
                 }
                 v
             }
+            Scope::Projects => self
+                .session
+                .recent_projects
+                .iter()
+                .filter(|d| d.is_dir() && Some(d.as_path()) != self.project_root())
+                .map(|d| palette::Item::Project {
+                    path: d.clone(),
+                    title: d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    detail: d.display().to_string(),
+                })
+                .collect(),
         };
         p.filter(items)
     }
@@ -1712,6 +1736,7 @@ impl App {
                     Some(palette::Item::Command { id, .. }) => return self.run(id),
                     Some(palette::Item::Tab { index, .. }) => self.active = index,
                     Some(palette::Item::Recent { path, .. }) => return self.handle(Message::OpenPicked(vec![path])),
+                    Some(palette::Item::Project { path, .. }) => return self.open_folder(path),
                     None => {}
                 }
             }

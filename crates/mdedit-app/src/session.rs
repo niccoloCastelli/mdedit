@@ -23,6 +23,8 @@ pub struct Session {
     pub recent: Vec<PathBuf>,
     /// Folder open as a project, reopened at start.
     pub project: Option<PathBuf>,
+    /// Project folders, most recent first.
+    pub recent_projects: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -38,6 +40,7 @@ pub struct TabSession {
 }
 
 pub const MAX_RECENT: usize = 50;
+pub const MAX_RECENT_PROJECTS: usize = 10;
 
 impl Session {
     pub fn load(path: &Path) -> Option<Self> {
@@ -54,6 +57,12 @@ impl Session {
         self.recent.retain(|p| p != path);
         self.recent.insert(0, path.to_path_buf());
         self.recent.truncate(MAX_RECENT);
+    }
+
+    pub fn push_recent_project(&mut self, dir: &Path) {
+        self.recent_projects.retain(|p| p != dir);
+        self.recent_projects.insert(0, dir.to_path_buf());
+        self.recent_projects.truncate(MAX_RECENT_PROJECTS);
     }
 }
 
