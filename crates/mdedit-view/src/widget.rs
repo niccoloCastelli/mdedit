@@ -219,6 +219,8 @@ struct State {
     preedit: Option<input_method::Preedit>,
     /// The last `SelectionRect` published.
     sel_rect: Option<Rectangle>,
+    /// The last `CaretRect` published.
+    caret_pub: Option<Rectangle>,
 }
 
 impl State {
@@ -699,7 +701,7 @@ impl<'a, Message> View<'a, Message> {
                     }
                 }
                 Action::Scroll(y) => st.echo = Some(*y),
-                Action::OpenLink(_) | Action::SelectionRect(_) => {}
+                Action::OpenLink(_) | Action::SelectionRect(_) | Action::CaretRect(_) => {}
             }
             shell.publish((self.on_action)(action));
         }
@@ -1384,6 +1386,17 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                 if rect != st.sel_rect {
                     st.sel_rect = rect;
                     shell.publish((self.on_action)(Action::SelectionRect(rect)));
+                }
+                if self.state.report_caret {
+                    let head = self.selection(st).head;
+                    let caret =
+                        st.focus.as_ref().and(self.caret_rect(st, head)).map(|r| r + Vector::new(bounds.x, bounds.y));
+                    if caret != st.caret_pub {
+                        st.caret_pub = caret;
+                        shell.publish((self.on_action)(Action::CaretRect(caret)));
+                    }
+                } else {
+                    st.caret_pub = None;
                 }
             }
             _ => {}

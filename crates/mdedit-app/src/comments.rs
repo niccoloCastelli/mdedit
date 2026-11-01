@@ -6,8 +6,9 @@
 //!   run after every update), so typing, undo and reloads move or detach
 //!   them without searching.
 //! - Comments are added from a selection (floating toolbar, context menu,
-//!   `comment.add` = Ctrl+Alt+M, palette) in every mode, Read included,
-//!   since adding a comment never edits the markdown.
+//!   `comment.add` = Ctrl+Alt+M, palette, `/comment`) in every mode, Read
+//!   included, since adding a comment never edits the markdown. With no
+//!   selection the caret's line is commented.
 //! - The sidecar is written when the document is saved, and right away when
 //!   a comment changes while the document is clean (Read mode, say). In
 //!   project mode every write counts as a save for the autocommit, which
@@ -294,7 +295,19 @@ impl App {
             self.toast("Comments are not available for large files.");
             return Task::none();
         }
-        let range = trim_range(tab.doc.buffer(), tab.selection().range());
+        // No selection (`/comment`, or the shortcut on a bare caret): the
+        // caret's line.
+        let sel = tab.selection();
+        let range = if sel.is_empty() {
+            let buf = tab.doc.buffer();
+            let line = buf.byte_to_line(sel.head);
+            let start = buf.line_to_byte(line);
+            let text = buf.line(line);
+            start..start + text.trim_end_matches(['\n', '\r']).len()
+        } else {
+            sel.range()
+        };
+        let range = trim_range(tab.doc.buffer(), range);
         if range.is_empty() {
             self.toast("Select the text to comment on first.");
             return Task::none();

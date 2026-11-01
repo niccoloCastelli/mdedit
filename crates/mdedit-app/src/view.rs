@@ -81,6 +81,9 @@ impl App {
         if let Some(at) = self.context_menu {
             layers.push(self.context_menu_view(at));
         }
+        if let Some(l) = self.slash_layer() {
+            layers.push(l);
+        }
         if self.palette.is_some() {
             layers.push(self.palette_view());
         }
@@ -380,7 +383,8 @@ impl App {
             col = col.push(container(b).padding(Padding::from([SPACE_2, SPACE_4])));
         }
         let body = crate::context::context_area(self.document_body(tab), |p| Message::ContextMenu(Some(p)))
-            .keys_blocked(self.modal_open());
+            .keys_blocked(self.modal_open())
+            .nav_blocked(self.slash.menu.is_some());
         col.push(body).width(Length::Fill).height(Length::Fill).into()
     }
 

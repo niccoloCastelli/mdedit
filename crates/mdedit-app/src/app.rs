@@ -23,6 +23,7 @@ use crate::keymap::{self, KeyChord, Keymap, Overrides};
 use crate::palette::{self, Palette, Scope};
 use crate::session::{Session, TabSession};
 use crate::settings::{AppearanceMode, Mode, Paths, Settings};
+use crate::slash::{SlashMsg, SlashState};
 use crate::tab::{DiskStamp, External, Handoff, Tab, TabId};
 use crate::watch;
 
@@ -162,6 +163,7 @@ pub enum Message {
     OpenFolder(PathBuf),
     Export(ExportMsg),
     Comments(CommentMsg),
+    Slash(SlashMsg),
 }
 
 /// Custom title bar actions (no OS decorations).
@@ -234,6 +236,7 @@ pub struct App {
     pub dialog: Option<Dialog>,
     pub export: ExportUi,
     pub comments: CommentsUi,
+    pub slash: SlashState,
     pub toasts: Vec<Toast>,
     pub session: Session,
     /// Session tabs still loading, in their saved order.
@@ -321,6 +324,7 @@ impl App {
             dialog: None,
             export: ExportUi::default(),
             comments: CommentsUi::default(),
+            slash: SlashState::default(),
             toasts: Vec::new(),
             restoring: session.tabs.clone(),
             restore_active: session.tabs.get(session.active).map(|t| t.path.clone()),
@@ -565,6 +569,7 @@ impl App {
         let task = self.handle(message);
         self.align_left_table();
         let comment_focus = self.after_comments_update();
+        self.after_slash_update();
         // Give the keyboard back to the document when the tab, mode or a
         // modal layer changes, and after jumping from the sidebar (unless a
         // comment box just opened and wants it).
@@ -774,6 +779,7 @@ impl App {
             Message::Dialog(choice) => return self.on_dialog(choice),
             Message::Export(msg) => return self.on_export(msg),
             Message::Comments(msg) => return self.on_comments(msg),
+            Message::Slash(msg) => return self.on_slash(msg),
             Message::CloseRequested => return self.run_app(AppCommand::Quit),
             Message::SystemDark(dark) => {
                 self.system_dark = dark;
@@ -909,6 +915,9 @@ impl App {
             return task;
         }
         if let Some(task) = self.comments_key(&key, modifiers) {
+            return task;
+        }
+        if let Some(task) = self.slash_key(&key) {
             return task;
         }
         if key == Key::Named(Named::Escape) {
@@ -1538,6 +1547,10 @@ impl App {
         use mdedit_editor::Action;
         match &action {
             Action::SelectionRect(rect) => return self.on_selection_rect(id, false, *rect),
+            Action::CaretRect(rect) => {
+                self.slash_caret(id, *rect);
+                return Task::none();
+            }
             Action::Edit(_) => self.hide_toolbar_for_typing(),
             Action::Select(_) => self.comments.caret_moved = Some(id),
             _ => {}
@@ -1583,7 +1596,7 @@ impl App {
             }
             Action::Undo => return self.run_app(AppCommand::Undo),
             Action::Redo => return self.run_app(AppCommand::Redo),
-            Action::SelectionRect(_) => {}
+            Action::SelectionRect(_) | Action::CaretRect(_) => {}
         }
         Task::none()
     }
@@ -1592,6 +1605,12 @@ impl App {
         use mdedit_view::Action;
         match &action {
             Action::SelectionRect(rect) => return self.on_selection_rect(id, true, *rect),
+            Action::CaretRect(rect) => {
+                if self.active_tab().is_some_and(|t| t.id == id && t.mode == Mode::View) {
+                    self.slash_caret(id, *rect);
+                }
+                return Task::none();
+            }
             Action::Edit(_) => self.hide_toolbar_for_typing(),
             Action::Select(_) => self.comments.caret_moved = Some(id),
             _ => {}
@@ -1616,7 +1635,7 @@ impl App {
                 }
             }
             Action::OpenLink(url) => self.toast(format!("Link: {url}")),
-            Action::SelectionRect(_) => {}
+            Action::SelectionRect(_) | Action::CaretRect(_) => {}
         }
         Task::none()
     }

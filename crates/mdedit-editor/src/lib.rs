@@ -66,6 +66,9 @@ pub struct EditorState {
     /// value differs from the one in the previous view; set it back to
     /// `None` to jump to the same byte again later.
     pub scroll_to_byte: Option<usize>,
+    /// Publish [`Action::CaretRect`] whenever the caret moves (the app's
+    /// slash menu follows it).
+    pub report_caret: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +111,9 @@ pub enum Action {
     /// it changes (for the floating format toolbar). `None` when the
     /// selection is empty, scrolled away or the editor is not focused.
     SelectionRect(Option<iced::Rectangle>),
+    /// Window-space caret rectangle, sent when it changes while
+    /// [`EditorState::report_caret`] is on.
+    CaretRect(Option<iced::Rectangle>),
 }
 
 /// The Edit-mode view of `doc`. Use [`Editor::new`] to set a widget id

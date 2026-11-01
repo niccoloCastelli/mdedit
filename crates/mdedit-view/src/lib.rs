@@ -61,6 +61,8 @@ pub struct ViewState {
     /// Source byte ranges to highlight (comment anchors, search matches),
     /// sorted by start; drawn behind the text like the selection.
     pub highlights: Vec<mdedit_editor::Highlight>,
+    /// Publish [`Action::CaretRect`] whenever the caret moves.
+    pub report_caret: bool,
 }
 
 /// A source position and how far into its line (0.0-1.0) the viewport top
@@ -81,6 +83,9 @@ pub enum Action {
     /// it changes (for the floating format toolbar). `None` when the
     /// selection is empty, scrolled away or the view is not focused.
     SelectionRect(Option<iced::Rectangle>),
+    /// Window-space caret rectangle, sent when it changes while
+    /// [`ViewState::report_caret`] is on.
+    CaretRect(Option<iced::Rectangle>),
 }
 
 /// The View-mode (or, with `state.read_only`, Split preview) view of `doc`.

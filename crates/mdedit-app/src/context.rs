@@ -10,25 +10,33 @@ use iced::advanced::overlay;
 use iced::advanced::renderer;
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
-use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
+use iced::{Element, Event, Length, Point, Rectangle, Size, Vector, keyboard};
 
 pub struct ContextArea<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
     on_right: Box<dyn Fn(Point) -> Message + 'a>,
     keys_blocked: bool,
+    nav_blocked: bool,
 }
 
 pub fn context_area<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
     on_right: impl Fn(Point) -> Message + 'a,
 ) -> ContextArea<'a, Message, Theme, Renderer> {
-    ContextArea { content: content.into(), on_right: Box::new(on_right), keys_blocked: false }
+    ContextArea { content: content.into(), on_right: Box::new(on_right), keys_blocked: false, nav_blocked: false }
 }
 
 impl<Message, Theme, Renderer> ContextArea<'_, Message, Theme, Renderer> {
     /// Drop keyboard and input-method events (a modal layer is open).
     pub fn keys_blocked(mut self, blocked: bool) -> Self {
         self.keys_blocked = blocked;
+        self
+    }
+
+    /// Drop only the keys a popup list navigates with (arrows up/down,
+    /// Enter, Tab, Esc): the slash menu is open over the document.
+    pub fn nav_blocked(mut self, blocked: bool) -> Self {
+        self.nav_blocked = blocked;
         self
     }
 }
@@ -76,6 +84,19 @@ where
             shell.publish((self.on_right)(p));
         }
         if self.keys_blocked && matches!(event, Event::Keyboard(_) | Event::InputMethod(_)) {
+            return;
+        }
+        if self.nav_blocked
+            && let Event::Keyboard(keyboard::Event::KeyPressed { key: keyboard::Key::Named(named), .. }) = event
+            && matches!(
+                named,
+                keyboard::key::Named::ArrowUp
+                    | keyboard::key::Named::ArrowDown
+                    | keyboard::key::Named::Enter
+                    | keyboard::key::Named::Tab
+                    | keyboard::key::Named::Escape
+            )
+        {
             return;
         }
         self.content.as_widget_mut().update(
