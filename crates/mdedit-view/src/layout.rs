@@ -289,6 +289,47 @@ pub(crate) fn layout_node(ctx: &Ctx<'_>, node: &LayoutNode, top: f32, laid_start
 /// Lay out a block as its styled source (Typora reveal). `lines` are the
 /// source lines (without endings) starting at `start`, with their syntax
 /// ranges; `eols` the byte length of each line ending.
+/// Quote markers and indentation at the start of a line.
+fn container_prefix(line: &str) -> usize {
+    let mut i = 0;
+    let b = line.as_bytes();
+    loop {
+        let indent = b[i..].iter().take_while(|&&c| c == b' ' || c == b'\t').count();
+        if b.get(i + indent) == Some(&b'>') {
+            i += indent + 1;
+            if b.get(i) == Some(&b' ') {
+                i += 1;
+            }
+        } else {
+            return i + indent;
+        }
+    }
+}
+
+/// If the line break between `prev` and `next` is a soft break in running
+/// text (not a hard break, nor the start of another block or list item),
+/// the length of `next`'s quote markers and indentation.
+fn soft_break(prev: &str, next: &str) -> Option<usize> {
+    let pp = container_prefix(prev);
+    let np = container_prefix(next);
+    let quotes = |s: &str, n: usize| s[..n].bytes().filter(|&c| c == b'>').count();
+    let p = &prev[pp..];
+    let t = &next[np..];
+    let hard = p.ends_with("  ") || p.ends_with('\\');
+    let digits = t.bytes().take_while(u8::is_ascii_digit).count();
+    let starts_block = t.is_empty()
+        || t.starts_with(['>', '#', '|', '`', '~', '<'])
+        || (t.starts_with(['-', '*', '+']) && matches!(t.as_bytes().get(1), Some(b' ') | None))
+        || (digits > 0 && matches!(t.as_bytes().get(digits), Some(b'.' | b')')))
+        || t.starts_with("[^");
+    let joins = !hard
+        && !p.trim().is_empty()
+        && !starts_block
+        && !p.starts_with(['#', '|'])
+        && quotes(prev, pp) == quotes(next, np);
+    joins.then_some(np)
+}
+
 pub(crate) fn layout_source(
     ctx: &Ctx<'_>,
     lines: &[(String, usize, Vec<StyledRange>)],
@@ -304,31 +345,44 @@ pub(crate) fn layout_source(
     let mut map = Vec::new();
     let mut code_ranges = Vec::new();
     for (n, (line, source_start, ranges)) in lines.iter().enumerate() {
+        // Bytes of this line hidden behind a joined line break.
+        let mut skip = 0;
         if n > 0 {
             let prev_end = lines[n - 1].1 + lines[n - 1].0.len();
             let start = text.len();
-            text.push('\n');
+            // A soft line break inside running text shows as a space (with
+            // the next line's quote markers and indentation folded into it),
+            // so the revealed block wraps like the rendered one.
+            let brk = match soft_break(&lines[n - 1].0, line) {
+                Some(prefix) if !code => {
+                    skip = prefix;
+                    " "
+                }
+                _ => "\n",
+            };
+            text.push_str(brk);
             map.push(MapSpan {
                 text: start..start + 1,
-                source: prev_end..*source_start,
-                exact: *source_start == prev_end + 1,
+                source: prev_end..*source_start + skip,
+                exact: *source_start + skip == prev_end + 1,
             });
-            spans.push(Span::new("\n").size(base.size).line_height(LineHeight::Absolute(Pixels(base.line_height))));
+            spans.push(Span::new(brk).size(base.size).line_height(LineHeight::Absolute(Pixels(base.line_height))));
         }
         let line_start = text.len();
-        text.push_str(line);
+        text.push_str(&line[skip..]);
         map.push(MapSpan {
             text: line_start..text.len(),
-            source: *source_start..source_start + line.len(),
+            source: *source_start + skip..source_start + line.len(),
             exact: true,
         });
+        let line_start = line_start.wrapping_sub(skip);
         // Split the line where any token starts or ends; the innermost
         // (last) token wins for colour, enclosing ones still apply size and
         // weight.
-        let mut cuts: Vec<usize> = vec![0, line.len()];
+        let mut cuts: Vec<usize> = vec![skip, line.len()];
         for r in ranges {
-            cuts.push(r.range.start.min(line.len()));
-            cuts.push(r.range.end.min(line.len()));
+            cuts.push(r.range.start.clamp(skip, line.len()));
+            cuts.push(r.range.end.clamp(skip, line.len()));
         }
         cuts.sort_unstable();
         cuts.dedup();
@@ -366,7 +420,7 @@ pub(crate) fn layout_source(
                         color = c.code;
                         if !code {
                             style = TextStyle { size: style.size * 0.875, ..style };
-                            code_ranges.push(line_start + s..line_start + e);
+                            code_ranges.push(line_start.wrapping_add(s)..line_start.wrapping_add(e));
                         }
                     }
                     SyntaxToken::Html => color = c.html,
@@ -1181,4 +1235,22 @@ pub(crate) fn trim_cell(buf: &dyn mdedit_core::TextBuffer, range: Range<usize>) 
         }
     }
     range.start + lead..range.start + end
+}
+
+#[cfg(test)]
+mod reveal_tests {
+    use super::soft_break;
+
+    #[test]
+    fn soft_breaks_join_running_text_only() {
+        assert_eq!(soft_break("some text", "more text"), Some(0));
+        assert_eq!(soft_break("> quoted", "> more"), Some(2));
+        assert_eq!(soft_break("- item", "  continued"), Some(2));
+        assert_eq!(soft_break("- item", "- next"), None);
+        assert_eq!(soft_break("hard  ", "break"), None);
+        assert_eq!(soft_break("hard\\", "break"), None);
+        assert_eq!(soft_break("> quote", "lazy"), None);
+        assert_eq!(soft_break("# Heading", "text"), None);
+        assert_eq!(soft_break("text", "1. item"), None);
+    }
 }
