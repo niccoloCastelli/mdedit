@@ -16,6 +16,9 @@
 //!   [`EditorState::scroll_y`]. Setting `scroll_y` to anything else makes the
 //!   widget jump there (restoring a session, Split-mode sync). Not storing it
 //!   is fine too: the widget keeps its own scroll anchor.
+//! - Every `Scroll` is followed by an [`Action::TopAnchor`] naming the source
+//!   position at the top of the viewport (Split-mode sync, ARCHITECTURE 4.3).
+//!   [`EditorState::scroll_to_byte`] is the reverse direction.
 //! - [`Action::Copy`] asks the app to put text on the clipboard (the widget
 //!   does not write the clipboard itself); cut sends `Copy` then `Edit`.
 //!   [`Action::Paste`] asks the app to read the clipboard and send the text
@@ -58,6 +61,11 @@ pub struct EditorState {
     pub highlights: Vec<Highlight>,
     /// Use the whole width instead of the 720 px measure (DESIGN_SYSTEM 3.3).
     pub full_width: bool,
+    /// Scroll so the line holding this byte is at the top of the viewport
+    /// (Split sync driven by the preview). The widget jumps whenever the
+    /// value differs from the one in the previous view; set it back to
+    /// `None` to jump to the same byte again later.
+    pub scroll_to_byte: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +88,13 @@ pub enum Action {
     Edit(Edit),
     Select(Selection),
     Scroll(f32),
+    /// Sent after every `Scroll`: `byte` is the start of the line at the top
+    /// of the viewport and `fraction` (0..1) how far into that line's height
+    /// the viewport top is. Unlike the pixel offset, this maps to the source.
+    TopAnchor {
+        byte: usize,
+        fraction: f32,
+    },
     /// Put text on the clipboard (copy/cut; cut also sends an `Edit`).
     Copy(String),
     /// Ctrl+V: the app reads the clipboard (images may go to assets/).
