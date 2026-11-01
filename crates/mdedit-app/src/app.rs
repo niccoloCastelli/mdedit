@@ -111,6 +111,9 @@ pub enum Message {
     WindowResized(Size),
     /// 150 ms after the selection last moved: show the format toolbar.
     ToolbarTick,
+    WindowId(Option<window::Id>),
+    Window(WindowCmd),
+    Maximized(bool),
     ToolbarHeading(bool),
     MenuHover(usize),
     SelectTab(usize),
@@ -145,6 +148,15 @@ pub enum Message {
     /// Synthetic keystroke for `MDEDIT_TRACE_TYPE`.
     TraceType,
     Parsed(TabId, Handoff<mdedit_core::parse::ParseResult>),
+}
+
+/// Custom title bar actions (no OS decorations).
+#[derive(Debug, Clone, Copy)]
+pub enum WindowCmd {
+    Drag,
+    Minimize,
+    ToggleMaximize,
+    Resize(window::Direction),
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +212,10 @@ pub struct App {
     pub context_menu: Option<Point>,
     pub toolbar: FormatToolbar,
     pub window_size: Size,
+    window_id: Option<window::Id>,
+    pub maximized: bool,
+    /// Drawn by us instead of the OS; fixed at start-up.
+    pub custom_title_bar: bool,
     pub palette: Option<Palette>,
     pub dialog: Option<Dialog>,
     pub toasts: Vec<Toast>,
@@ -240,6 +256,7 @@ impl App {
         }
         let paths = Paths::detect();
         let (settings, settings_err) = Settings::load(&paths.settings());
+        let custom_title_bar = settings.appearance.custom_title_bar();
         let (keymap_file, keymap_err) = load_keymap_file(&paths.keymap());
         let keymap = Keymap::new([&settings.keymap, &keymap_file]);
         let session = if settings.files.restore_session {
@@ -276,6 +293,9 @@ impl App {
             context_menu: None,
             toolbar: FormatToolbar::default(),
             window_size: Size::new(1200.0, 800.0),
+            window_id: None,
+            maximized: false,
+            custom_title_bar,
             palette: None,
             dialog: None,
             toasts: Vec::new(),
@@ -303,6 +323,7 @@ impl App {
 
         let mut tasks = vec![
             iced::system::theme().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
+            window::oldest().map(Message::WindowId),
             iced::widget::operation::focus(EDITOR),
         ];
         let threshold = app.settings.files.large_file_threshold();
@@ -544,7 +565,23 @@ impl App {
                 self.menu_open = None;
                 self.context_menu = p.filter(|_| self.palette.is_none() && self.dialog.is_none());
             }
-            Message::WindowResized(size) => self.window_size = size,
+            Message::WindowResized(size) => {
+                self.window_size = size;
+                if let Some(id) = self.window_id {
+                    return window::is_maximized(id).map(Message::Maximized);
+                }
+            }
+            Message::WindowId(id) => self.window_id = id,
+            Message::Maximized(m) => self.maximized = m,
+            Message::Window(cmd) => {
+                let Some(id) = self.window_id else { return Task::none() };
+                return match cmd {
+                    WindowCmd::Drag => window::drag(id),
+                    WindowCmd::Minimize => window::minimize(id, true),
+                    WindowCmd::ToggleMaximize => window::toggle_maximize(id),
+                    WindowCmd::Resize(dir) => window::drag_resize(id, dir),
+                };
+            }
             Message::ToolbarTick => {
                 let t = &mut self.toolbar;
                 if t.rect.is_some() && !t.dismissed && t.changed.elapsed() >= TOOLBAR_DELAY {

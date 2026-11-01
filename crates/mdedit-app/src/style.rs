@@ -206,3 +206,23 @@ pub fn input(theme: &Theme) -> impl Fn(&iced::Theme, text_input::Status) -> text
         }
     }
 }
+
+/// Minimise/maximise/close in the custom title bar: square, flat, close
+/// turns `danger` on hover.
+pub fn window_button(theme: &Theme, close: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style + '_ {
+    move |_, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let bg = match (hovered, close) {
+            (false, _) => None,
+            (true, true) => Some(c(theme, T::Danger)),
+            (true, false) => Some(c(theme, T::SurfaceRaised)),
+        };
+        button::Style {
+            background: bg.map(Background::Color),
+            text_color: c(theme, T::TextSecondary),
+            border: border::rounded(0),
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
