@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.1.2 (2026-11-02)
+
+### Features
+
+- **Close Project:** File > Close Project (also the x in the project header
+  and the palette) saves and closes the project's tabs, commits pending
+  changes and leaves project mode, so mdedit goes back to editing standalone
+  files.
+- **Recent projects:** the last 10 project folders are listed in the empty
+  Files panel and under File > Open Recent Project…. Opening another project
+  closes the current one first.
+- **Files from outside a project:** starting mdedit with files that are not
+  inside the last project (for example opening an `.md` from the file
+  manager) opens them on their own instead of restoring that project.
+
+### Known limitations
+
+- Same as v0.1.1.
+
 ## v0.1.1 (2026-11-01)
 
 Packaging fix release.
