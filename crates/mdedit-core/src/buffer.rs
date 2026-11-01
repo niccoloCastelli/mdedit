@@ -1,9 +1,8 @@
 //! Text storage behind a [`Document`](crate::Document).
 //!
 //! [`TextBuffer`] is the interface; [`RopeBuffer`] (files up to the large-file
-//! threshold) is implemented here. `MappedBuffer` (memory-mapped piece table
-//! for large files, SPEC 8) is added by the large-files workstream in
-//! `buffer/mapped.rs`.
+//! threshold) is implemented here; [`MappedBuffer`] (memory-mapped piece
+//! table for large files, SPEC 8) in `mapped.rs`.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -12,6 +11,7 @@ use std::sync::Arc;
 use ropey::Rope;
 
 use crate::edit::{AppliedEdit, Edit, EditOrigin};
+use crate::mapped::MappedBuffer;
 
 /// Read and edit access to document text. All offsets are UTF-8 byte offsets
 /// on char boundaries; line indices are 0-based.
@@ -49,6 +49,18 @@ pub trait TextBuffer: Send + Sync {
     /// The whole text. Avoid on large buffers.
     fn text(&self) -> Cow<'_, str> {
         self.slice(0..self.len_bytes())
+    }
+
+    /// The large-file buffer behind this one, for what only it has (index
+    /// progress, disk-change checks, save with remap, page release).
+    fn as_mapped(&self) -> Option<&MappedBuffer> {
+        None
+    }
+
+    /// Mutable access to the large-file buffer. Never apply edits through
+    /// it: they would bypass the document's edit log.
+    fn as_mapped_mut(&mut self) -> Option<&mut MappedBuffer> {
+        None
     }
 }
 

@@ -25,5 +25,6 @@ pub use buffer::{RopeBuffer, TextBuffer};
 pub use document::Document;
 pub use edit::{AppliedEdit, Edit, EditOrigin, TxnId};
 pub use edit_log::{EditListener, EditLog};
+pub use mapped::{DiskChange, MappedBuffer};
 pub use parse::{Block, BlockIndex, BlockKind};
 pub use selection::Selection;

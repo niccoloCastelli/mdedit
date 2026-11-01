@@ -1130,6 +1130,8 @@ impl App {
             }
             Action::Select(sel) => tab.set_selection(sel),
             Action::Scroll(y) => tab.editor.scroll_y = y,
+            // Split scroll sync (ARCHITECTURE 4.3); wired by the app shell.
+            Action::TopAnchor { .. } => {}
             Action::Copy(text) => return iced::clipboard::write(text),
             Action::Paste => {
                 if tab.doc.format.read_only {
