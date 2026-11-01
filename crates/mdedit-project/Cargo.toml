@@ -6,6 +6,16 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mdedit-core.workspace = true
+mdedit-sidecar.workspace = true
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
+pulldown-cmark.workspace = true
+sha2.workspace = true
+jiff.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

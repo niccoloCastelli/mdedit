@@ -1,5 +1,6 @@
-//! `.mdedit/project.toml` (SPEC 6.2). Unknown keys are kept out of scope for
-//! now; every field has a default so a partial file loads.
+//! `.mdedit/project.toml` (SPEC 6.2). Every field has a default so a partial
+//! file loads; unknown top-level tables are kept on save (unknown keys inside
+//! the known sections are not).
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,9 @@ pub struct ProjectConfig {
     pub git: GitSection,
     pub files: FilesSection,
     pub export: ExportSection,
+    /// Top-level tables this version does not know, written back unchanged.
+    #[serde(flatten)]
+    pub extra: toml::Table,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
