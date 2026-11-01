@@ -269,8 +269,9 @@ widget. Every icon button has a tooltip with its shortcut.
 - **Sidebar** (240 px, resizable 200-400, collapsible with Ctrl+Shift+B) with tabs:
   Files (project mode), Outline (headings), Search, Git (branches, history,
   checkpoints).
-- **Comments panel** (300 px, right, Ctrl+Alt+M) lists threads in document
-  order; each card aligns with its anchor when there is room.
+- **Comments panel** (300 px, right, Ctrl+Shift+M; adding a comment with
+  Ctrl+Alt+M opens it too) lists threads in document order, detached ones
+  last. (Cards aligned with their anchors is a later refinement.)
 - **Status bar** (24 px): branch, save/sync state, autocommit countdown, cursor
   position, word count, mode switcher, large-file indicator.
 - **Split mode** divides the editor area 50/50 (draggable) with synced scroll
@@ -326,7 +327,7 @@ new colour.
 | **Edit** | Markdown source with syntax styling (2.4), line numbers optional | Ctrl+1 |
 | **Split** | Source left, rendered preview right, synced scroll, preview read-only | Ctrl+2 |
 | **View** | WYSIWYG: the document is rendered and editable. The block containing the cursor reveals its markdown markers (Typora's model), all other blocks stay rendered | Ctrl+3 |
-| **Read** | View without editing: no caret, no formatting toolbar, but text can still be selected and copied (and, later, commented). Ctrl+4 again returns to View | Ctrl+4 |
+| **Read** | View without editing: no caret, and the floating toolbar only offers Comment; text can still be selected, copied and commented. Ctrl+4 again returns to View | Ctrl+4 |
 
 The status bar shows the four modes as one fixed segmented control; nothing
 appears or disappears with the mode. Ctrl+E cycles Edit, Split, View, Read. The cursor position and selection are preserved across

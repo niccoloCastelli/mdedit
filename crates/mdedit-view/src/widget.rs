@@ -48,6 +48,41 @@ pub struct View<'a, Message> {
 }
 
 impl<Message> View<'_, Message> {
+    /// Comment and search highlights over one text item whose laid-out
+    /// source range is `src`.
+    fn draw_highlights(&self, r: &mut iced::Renderer, v: &Visible, t: &TextItem, src: Range<usize>, o: Vector) {
+        use mdedit_editor::HighlightKind as K;
+        let c = self.look.colors;
+        let hl = &self.state.highlights;
+        if hl.is_empty() {
+            return;
+        }
+        for h in hl {
+            let laid = v.to_laid(h.range.start)..v.to_laid(h.range.end);
+            if laid.start > src.end {
+                break;
+            }
+            if laid.end < src.start || laid.is_empty() {
+                continue;
+            }
+            let (color, border) = match h.kind {
+                K::SearchMatch => (c.warning_bg, Border::default()),
+                K::CurrentSearchMatch => (c.accent_soft, Border { color: c.accent, width: 1.0, radius: 2.0.into() }),
+                K::Comment | K::ActiveComment => (c.comment, Border::default()),
+            };
+            for tr in t.text_ranges(laid) {
+                for rect in t.range_rects(tr.start, tr.end) {
+                    let rect = rect + o;
+                    r.fill_quad(renderer::Quad { bounds: rect, border, ..renderer::Quad::default() }, color);
+                    if h.kind == K::ActiveComment {
+                        let line = Rectangle { y: rect.y + rect.height - 2.0, height: 2.0, ..rect };
+                        r.fill_quad(renderer::Quad { bounds: line, ..renderer::Quad::default() }, c.warning_text);
+                    }
+                }
+            }
+        }
+    }
+
     /// Window-space bounding box of the visible selection, clipped to the
     /// widget (the same rectangles `draw` fills).
     fn selection_rect(&self, st: &State, bounds: Rectangle) -> Option<Rectangle> {
@@ -1431,6 +1466,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                             let o = Vector::new(origin.x + t.pos.x, origin.y + t.pos.y);
                             for (rect, color, border) in &t.under {
                                 quad(r, *rect + o, *color, *border);
+                            }
+                            if let Some(src) = t.source_range() {
+                                self.draw_highlights(r, v, t, src, o);
                             }
                             if !sel.is_empty() {
                                 let laid = v.to_laid(sel.start)..v.to_laid(sel.end);

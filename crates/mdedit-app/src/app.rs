@@ -17,6 +17,7 @@ use mdedit_core::{Document, Edit, EditOrigin, Selection};
 use mdedit_theme::Theme;
 
 use crate::command::{self, AppCommand, Command};
+use crate::comments::{CommentMsg, CommentsUi};
 use crate::export_ui::{ExportMsg, ExportUi};
 use crate::keymap::{self, KeyChord, Keymap, Overrides};
 use crate::palette::{self, Palette, Scope};
@@ -160,6 +161,7 @@ pub enum Message {
     Project(project::Msg),
     OpenFolder(PathBuf),
     Export(ExportMsg),
+    Comments(CommentMsg),
 }
 
 /// Custom title bar actions (no OS decorations).
@@ -231,6 +233,7 @@ pub struct App {
     pub palette: Option<Palette>,
     pub dialog: Option<Dialog>,
     pub export: ExportUi,
+    pub comments: CommentsUi,
     pub toasts: Vec<Toast>,
     pub session: Session,
     /// Session tabs still loading, in their saved order.
@@ -317,6 +320,7 @@ impl App {
             palette: None,
             dialog: None,
             export: ExportUi::default(),
+            comments: CommentsUi::default(),
             toasts: Vec::new(),
             restoring: session.tabs.clone(),
             restore_active: session.tabs.get(session.active).map(|t| t.path.clone()),
@@ -526,6 +530,7 @@ impl App {
 
     fn watched_paths(&self) -> Vec<PathBuf> {
         let mut v: Vec<PathBuf> = self.tabs.iter().filter_map(|t| t.doc.path.clone()).collect();
+        v.extend(self.comment_files());
         v.sort();
         v.dedup();
         v
@@ -540,7 +545,7 @@ impl App {
     }
 
     /// Focus the widget that takes typing in the active tab's mode.
-    fn focus_document(&self) -> Task<Message> {
+    pub(crate) fn focus_document(&self) -> Task<Message> {
         match self.active_tab().map(|t| t.mode) {
             Some(Mode::View) => iced::widget::operation::focus(VIEW),
             _ => iced::widget::operation::focus(EDITOR),
@@ -558,15 +563,19 @@ impl App {
         let is_edit = matches!(message, Message::Editor(_, mdedit_editor::Action::Edit(_)) | Message::TraceType);
         let started = Instant::now();
         let task = self.handle(message);
+        self.align_left_table();
+        let comment_focus = self.after_comments_update();
         // Give the keyboard back to the document when the tab, mode or a
-        // modal layer changes, and after jumping from the sidebar.
+        // modal layer changes, and after jumping from the sidebar (unless a
+        // comment box just opened and wants it).
         let after = focus_key(self);
-        let task = if (before != after || jump) && !after.1 && !after.2 {
+        let task = if let Some(focus) = comment_focus {
+            Task::batch([task, focus])
+        } else if (before != after || jump) && !after.1 && !after.2 {
             Task::batch([task, self.focus_document()])
         } else {
             task
         };
-        self.align_left_table();
         let derived = Task::batch([self.refresh_derived(), self.spawn_parse_jobs()]);
         if is_edit && let Some(t) = &mut self.trace {
             t.update_took(started.elapsed());
@@ -764,6 +773,7 @@ impl App {
             Message::FileChanged(path) => self.on_file_changed(&path),
             Message::Dialog(choice) => return self.on_dialog(choice),
             Message::Export(msg) => return self.on_export(msg),
+            Message::Comments(msg) => return self.on_comments(msg),
             Message::CloseRequested => return self.run_app(AppCommand::Quit),
             Message::SystemDark(dark) => {
                 self.system_dark = dark;
@@ -896,6 +906,9 @@ impl App {
 
     fn on_key(&mut self, key: Key, modifiers: Modifiers, captured: bool) -> Task<Message> {
         if let Some(task) = self.export_key(&key) {
+            return task;
+        }
+        if let Some(task) = self.comments_key(&key, modifiers) {
             return task;
         }
         if key == Key::Named(Named::Escape) {
@@ -1110,6 +1123,7 @@ impl App {
                 self.set_read(on);
             }
             ToggleComments => self.comments_visible = !self.comments_visible,
+            AddComment => return self.add_comment(),
             ShowFiles => return self.show_sidebar(SidebarTab::Files),
             ShowOutline => return self.show_sidebar(SidebarTab::Outline),
             ShowGit => return self.show_sidebar(SidebarTab::Git),
@@ -1362,6 +1376,7 @@ impl App {
                     self.session.push_recent(&path);
                     self.save_session();
                 }
+                self.comments_saved(id, &path);
                 if path == self.paths.settings() || path == self.paths.keymap() {
                     self.reload_config();
                 }
@@ -1513,7 +1528,7 @@ impl App {
         Task::perform(tokio::time::sleep(TOOLBAR_DELAY), |_| Message::ToolbarTick)
     }
 
-    fn hide_toolbar_for_typing(&mut self) {
+    pub(crate) fn hide_toolbar_for_typing(&mut self) {
         self.toolbar.visible = false;
         self.toolbar.heading_open = false;
         self.toolbar.dismissed = true;
@@ -1524,6 +1539,7 @@ impl App {
         match &action {
             Action::SelectionRect(rect) => return self.on_selection_rect(id, false, *rect),
             Action::Edit(_) => self.hide_toolbar_for_typing(),
+            Action::Select(_) => self.comments.caret_moved = Some(id),
             _ => {}
         }
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
@@ -1577,6 +1593,7 @@ impl App {
         match &action {
             Action::SelectionRect(rect) => return self.on_selection_rect(id, true, *rect),
             Action::Edit(_) => self.hide_toolbar_for_typing(),
+            Action::Select(_) => self.comments.caret_moved = Some(id),
             _ => {}
         }
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
@@ -1703,6 +1720,9 @@ impl App {
     }
 
     fn on_file_changed(&mut self, path: &Path) {
+        if self.comments_file_changed(path) {
+            return;
+        }
         let threshold = self.settings.files.large_file_threshold();
         let mut errors = Vec::new();
         for tab in self.tabs.iter_mut().filter(|t| t.doc.path.as_deref() == Some(path)) {

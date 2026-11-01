@@ -2,6 +2,7 @@
 
 mod app;
 mod command;
+mod comments;
 mod context;
 mod export_ui;
 mod keymap;

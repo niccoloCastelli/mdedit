@@ -51,6 +51,7 @@ pub enum AppCommand {
     ToggleSidebar,
     ModeRead,
     ToggleComments,
+    AddComment,
     ShowFiles,
     ShowOutline,
     ShowSearch,
@@ -95,8 +96,8 @@ macro_rules! app_commands {
 }
 
 // Ctrl+B is bold (DESIGN_SYSTEM 8.2), so the sidebar toggle moves to
-// Ctrl+Shift+B. Ctrl+Alt+M toggles the comments panel until adding a
-// comment (same shortcut) exists; that command will open the panel too.
+// Ctrl+Shift+B. Ctrl+Alt+M adds a comment (8.2) and opens the panel, so
+// toggling the panel moves to Ctrl+Shift+M.
 app_commands! {
     NewFile, "file.new", "New File", Some("file-plus"), Some("Ctrl+N");
     Open, "file.open", "Open File…", Some("folder-open"), Some("Ctrl+O");
@@ -129,7 +130,8 @@ app_commands! {
     CycleMode, "view.cycle_mode", "Cycle Mode", None, Some("Ctrl+E");
     ModeRead, "view.mode_read", "Read Mode (No Editing)", Some("lock"), Some("Ctrl+4");
     ToggleSidebar, "view.toggle_sidebar", "Toggle Sidebar", Some("panel-left"), Some("Ctrl+Shift+B");
-    ToggleComments, "view.toggle_comments", "Toggle Comments Panel", Some("message-square"), Some("Ctrl+Alt+M");
+    ToggleComments, "view.toggle_comments", "Toggle Comments Panel", Some("message-square"), Some("Ctrl+Shift+M");
+    AddComment, "comment.add", "Add Comment", Some("message-square-plus"), Some("Ctrl+Alt+M");
     ShowFiles, "view.show_files", "Show Files", Some("files"), None;
     ShowOutline, "view.show_outline", "Show Outline", Some("list-tree"), Some("Ctrl+Shift+O");
     ShowSearch, "view.show_search", "Show Search", Some("search"), None;
@@ -270,6 +272,8 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("insert.table"),
                 Some("insert.hr"),
                 None,
+                Some("comment.add"),
+                None,
                 Some("table.format"),
                 Some("table.insert_row_below"),
                 Some("table.insert_column_right"),
@@ -332,6 +336,8 @@ pub fn context_menu(in_table: bool) -> Vec<Option<&'static str>> {
         Some("format.italic"),
         Some("format.code"),
         Some("format.link"),
+        None,
+        Some("comment.add"),
     ];
     if in_table {
         items.extend([

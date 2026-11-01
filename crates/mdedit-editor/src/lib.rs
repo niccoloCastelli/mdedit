@@ -79,6 +79,9 @@ pub enum HighlightKind {
     SearchMatch,
     CurrentSearchMatch,
     Comment,
+    /// The comment focused in the comments panel: highlight plus a
+    /// `warning-text` underline (the margin marker colour).
+    ActiveComment,
 }
 
 /// What the widget asks the app to do.

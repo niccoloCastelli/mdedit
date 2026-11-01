@@ -20,6 +20,7 @@ use crate::settings::Mode;
 use crate::style::{self, Btn, c};
 use crate::tab::{External, Tab};
 
+mod comments_view;
 mod project_view;
 
 const UI: f32 = 13.0;
@@ -72,7 +73,7 @@ impl App {
         if self.toolbar.visible
             && !modal
             && self.context_menu.is_none()
-            && self.active_tab().is_some_and(|t| t.editable())
+            && self.active_tab().is_some_and(|t| t.editable() || t.mode == Mode::View)
             && let Some(rect) = self.toolbar.rect
         {
             layers.push(self.toolbar_view(rect));
@@ -262,6 +263,12 @@ impl App {
                 None => title.to_string(),
             }
         };
+        // Read mode only comments (DESIGN_SYSTEM 8.1).
+        let formatting = self.active_tab().is_some_and(|t| t.editable());
+        let comment = icon_button("message-square-plus", Some(Message::Run("comment.add")), tip("comment.add"));
+        if !formatting {
+            return self.toolbar_layer(sel, row![comment].into(), BUTTON, BUTTON);
+        }
         let mut bar = row![].spacing(2).align_y(Alignment::Center);
         for id in ["format.bold", "format.italic", "format.strike", "format.code", "format.link"] {
             let icon = command::find(id).and_then(|e| e.icon).unwrap_or("circle");
@@ -281,10 +288,22 @@ impl App {
         .style(style::btn(t, if self.toolbar.heading_open { Btn::Toggled } else { Btn::Ghost }))
         .on_press(Message::ToolbarHeading(!self.toolbar.heading_open));
         bar = bar.push(with_tooltip(t, heading, "Heading"));
-        bar = bar.push(icon_button("message-square", None, "Comment (coming with comments)".into()));
+        bar = bar.push(comment);
+        self.toolbar_layer(sel, bar.into(), 6.0 * BUTTON + 44.0 + 6.0 * 2.0, BUTTON)
+    }
 
-        let width = 6.0 * BUTTON + 44.0 + 6.0 * 2.0 + 2.0 * SPACE_1 + 2.0;
-        let height = BUTTON + 2.0 * SPACE_1 + 2.0;
+    /// Places the toolbar `bar` (`width` × `button` px inside its padding)
+    /// over or under the selection, with the heading menu when open.
+    fn toolbar_layer<'a>(
+        &'a self,
+        sel: iced::Rectangle,
+        bar: Element<'a, Message>,
+        width: f32,
+        button: f32,
+    ) -> Element<'a, Message> {
+        let t = &self.theme;
+        let width = width + 2.0 * SPACE_1 + 2.0;
+        let height = button + 2.0 * SPACE_1 + 2.0;
         let top_limit = MENU_BAR_HEIGHT + TAB_HEIGHT;
         let x = (sel.center_x() - width / 2.0).clamp(SPACE_1, (self.window_size.width - width - SPACE_1).max(SPACE_1));
         let above = sel.y - 8.0 - height;
@@ -293,7 +312,7 @@ impl App {
         let mut layer = stack![pin(opaque(toolbar)).x(x).y(y)];
         if self.toolbar.heading_open {
             let items = [Some("format.paragraph"), Some("format.h1"), Some("format.h2"), Some("format.h3")];
-            let hx = x + SPACE_1 + 1.0 + 5.0 * (BUTTON + 2.0);
+            let hx = x + SPACE_1 + 1.0 + 5.0 * (button + 2.0);
             layer = layer.push(pin(opaque(self.menu_list(&items))).x(hx).y(y + height + 4.0));
         }
         layer.into()
@@ -561,24 +580,6 @@ impl App {
             scrollable(col.padding(Padding::from([0.0, SPACE_2]))).height(Length::Fill),
         ]
         .spacing(SPACE_2)
-        .into()
-    }
-
-    fn comments_view(&self) -> Element<'_, Message> {
-        let t = &self.theme;
-        container(
-            column![
-                text("COMMENTS").size(EYEBROW).font(bold()).color(c(t, T::TextMuted)),
-                text("No comments yet. Select text and add one with Ctrl+Alt+M once comment support lands.")
-                    .size(UI_SMALL)
-                    .color(c(t, T::TextMuted)),
-            ]
-            .spacing(SPACE_3),
-        )
-        .padding(SPACE_4)
-        .width(COMMENTS_WIDTH)
-        .height(Length::Fill)
-        .style(style::chrome(t))
         .into()
     }
 

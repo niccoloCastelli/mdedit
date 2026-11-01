@@ -56,12 +56,15 @@ pub struct Tab {
     /// The table the cursor is in, to auto-align it when the cursor leaves
     /// (DESIGN_SYSTEM 8.4).
     pub table: Option<std::ops::Range<usize>>,
+    /// The sidecar's comments and their live ranges (`comments.rs`).
+    pub comments: crate::comments::DocComments,
 }
 
 impl Tab {
     pub fn new(id: TabId, doc: Document, mode: Mode, untitled: usize) -> Self {
         let disk = doc.path.as_deref().and_then(DiskStamp::read);
         let mode = if doc.is_large() { Mode::Edit } else { mode };
+        let comments = crate::comments::DocComments::load(&doc);
         Self {
             id,
             doc,
@@ -75,6 +78,7 @@ impl Tab {
             saving: false,
             skip_select: false,
             table: None,
+            comments,
         }
     }
 
@@ -192,6 +196,7 @@ impl Tab {
         let fresh = io::load(&path, threshold).map_err(|e| e.to_string())?;
         let text = fresh.buffer().text();
         if text != self.doc.buffer().text() {
+            self.comments.before_reload(&self.doc);
             // Mapping through a whole-document replace would push every
             // cursor to the end; keep the offsets instead, clamped.
             let keep = |s: Selection, len: usize| Selection { anchor: s.anchor.min(len), head: s.head.min(len) };
