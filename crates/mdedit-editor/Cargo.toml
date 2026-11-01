@@ -9,3 +9,4 @@ license.workspace = true
 mdedit-core.workspace = true
 mdedit-theme = { workspace = true, features = ["iced"] }
 iced.workspace = true
+unicode-segmentation.workspace = true

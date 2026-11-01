@@ -1945,6 +1945,7 @@ dependencies = [
  "iced",
  "mdedit-core",
  "mdedit-theme",
+ "unicode-segmentation",
 ]
 
 [[package]]
