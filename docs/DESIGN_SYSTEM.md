@@ -67,7 +67,7 @@ Widgets only ever use these names. Themes assign values to them.
 | `border-strong` | `#C6C5C3` | |
 | `text` | `#1B1A19` | PDF headings and body, 17.4:1 |
 | `text-secondary` | `#5F5B57` | PDF lead paragraph, 6.7:1 |
-| `text-muted` | `#78746F` | PDF uses `#969491` (3.0:1), darkened to 4.6:1 |
+| `text-muted` | `#716D68` | PDF uses `#969491` (3.0:1), darkened to 5.1:1 (4.6:1 on `bg-subtle`, where the sidebar and menus use it) |
 | `accent` | `#D9542B` | PDF eyebrow, numbers, primary button |
 | `accent-text` | `#B8431F` | accent darkened for small text, 5.4:1 |
 | `accent-soft` | `#FBE9E2` | PDF step badges |
@@ -123,6 +123,8 @@ View mode. Markers are de-emphasised so the prose stays readable.
 
 Code block highlighting inside fences uses `syntect` (or `tree-sitter`
 grammars later) with a token map per theme; that map is part of the theme file.
+In the theme file it is the `[code]` table (syntect scope selector = colour
+or `{ color, bold, italic }`); see [example-theme.toml](example-theme.toml).
 
 ### 2.5 Theme files
 
@@ -405,3 +407,6 @@ table and can be overridden in a `keymap.toml`.
   default; a View/export setting turns it on.
 - 2026-11-01: Edit mode uses the proportional prose font by default, with
   code blocks in monospace; monospace for the whole buffer is a setting.
+- 2026-11-01: Ember Light `text-muted` darkened from `#78746F` to `#716D68`
+  so it passes AA on `bg-subtle` and `surface-raised` too (sidebar, hovered
+  menu items), as the 8.7 contrast test requires.
