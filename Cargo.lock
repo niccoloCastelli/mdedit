@@ -3665,6 +3665,7 @@ dependencies = [
 name = "mdedit-app"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "iced",
  "mdedit-core",
  "mdedit-editor",
@@ -3675,8 +3676,12 @@ dependencies = [
  "mdedit-sidecar",
  "mdedit-theme",
  "mdedit-view",
+ "notify",
  "rfd",
+ "serde",
+ "tempfile",
  "tokio",
+ "toml",
 ]
 
 [[package]]
