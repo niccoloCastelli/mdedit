@@ -7,7 +7,8 @@ use std::time::Instant;
 use crate::buffer::{RopeBuffer, TextBuffer};
 use crate::edit::{AppliedEdit, Edit, EditOrigin, TxnId};
 use crate::edit_log::EditLog;
-use crate::io::FileFormat;
+use crate::io::{FileFormat, IoError};
+use crate::mapped::{MappedBuffer, Remap};
 use crate::parse::{BlockIndex, ParseJob, ParseResult};
 use crate::selection::Selection;
 use crate::undo::UndoStack;
@@ -54,6 +55,21 @@ impl Document {
 
     pub fn buffer(&self) -> &dyn TextBuffer {
         self.buffer.as_ref()
+    }
+
+    /// The large-file buffer, if this document has one (SPEC 8).
+    pub fn mapped(&self) -> Option<&MappedBuffer> {
+        self.buffer.as_mapped()
+    }
+
+    /// Switch a large-file document to the file just written by
+    /// [`MappedBuffer::save_to`]; see [`MappedBuffer::remap`]. The text does
+    /// not change, so nothing is logged.
+    pub fn remap(&mut self, saved: Remap) -> Result<bool, IoError> {
+        match self.buffer.as_mapped_mut() {
+            Some(m) => m.remap(saved),
+            None => Ok(false),
+        }
     }
 
     pub fn blocks(&self) -> Option<&BlockIndex> {
