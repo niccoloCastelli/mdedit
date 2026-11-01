@@ -1,0 +1,19 @@
+# Guide: the look of the reference PDF (DESIGN_SYSTEM 7.1): accent eyebrow
+# over the title, a lead paragraph, a rule and an `01` number over each
+# section, rounded tables, callout boxes and numbered step badges.
+name = "Guide"
+style = "guide"
+page_size = "a4"
+margins_mm = [22.0, 22.0, 22.0, 22.0]
+font_body = "Hanken Grotesk"
+font_mono = "JetBrains Mono"
+base_size_pt = 10.5
+line_height = 1.6
+accent = "#D9542B"
+heading_numbers = true
+number_style = "guide"
+lead = true
+eyebrow = ""
+header = ""
+footer = "{title} | | {page} / {pages}"
+code_theme = "ember-light"
