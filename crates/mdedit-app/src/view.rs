@@ -65,7 +65,8 @@ impl App {
         if let Some(i) = self.menu_open {
             layers.push(self.menu_dropdown(i));
         }
-        let modal = self.menu_open.is_some() || self.palette.is_some() || self.dialog.is_some();
+        let modal =
+            self.menu_open.is_some() || self.palette.is_some() || self.dialog.is_some() || self.export.dialog.is_some();
         if self.toolbar.visible
             && !modal
             && self.context_menu.is_none()
@@ -83,6 +84,7 @@ impl App {
         if let Some(d) = &self.dialog {
             layers.push(self.dialog_view(d));
         }
+        layers.extend(self.export_layers());
         if !self.toasts.is_empty() {
             layers.push(self.toasts_view());
         }
@@ -187,6 +189,7 @@ impl App {
             "edit.cut" => !tab.selection().is_empty() && tab.editable(),
             "edit.copy" => !tab.selection().is_empty(),
             "edit.paste" | "edit.paste_table" => tab.editable(),
+            "file.export_pdf" | "file.export_docx" => !self.export.busy(),
             id if id.starts_with("format.") || id.starts_with("insert.") || id.starts_with("table.") => tab.editable(),
             _ => true,
         }
@@ -592,6 +595,9 @@ impl App {
             if tab.doc.format.bom {
                 left = left.push(text("BOM").size(UI_SMALL).color(muted));
             }
+            if let Some(export) = self.export_status() {
+                left = left.push(export);
+            }
 
             let buf = tab.doc.buffer();
             let head = tab.selection().head.min(buf.len_bytes());
@@ -765,7 +771,7 @@ impl App {
     }
 }
 
-fn bold() -> Font {
+pub(crate) fn bold() -> Font {
     Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT }
 }
 
@@ -794,7 +800,7 @@ fn sidebar_row<'a>(t: &'a Theme, label: iced::widget::Text<'a>, msg: Message, in
         .into()
 }
 
-fn small_button<'a>(t: &'a Theme, label: &'a str, kind: Btn, msg: Option<Message>) -> Element<'a, Message> {
+pub(crate) fn small_button<'a>(t: &'a Theme, label: &'a str, kind: Btn, msg: Option<Message>) -> Element<'a, Message> {
     button(text(label).size(UI))
         .height(28)
         .padding(Padding::from([SPACE_1, SPACE_3]))
@@ -817,7 +823,7 @@ fn with_tooltip<'a>(t: &'a Theme, content: impl Into<Element<'a, Message>>, tip:
 
 /// A floating card over a dimmed backdrop; clicking the backdrop sends
 /// `on_dismiss`. Dialogs are centred, the palette sits near the top.
-fn modal<'a>(
+pub(crate) fn modal<'a>(
     t: &'a Theme,
     card: impl Into<Element<'a, Message>>,
     on_dismiss: Message,
