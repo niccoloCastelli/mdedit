@@ -921,7 +921,7 @@ impl App {
             Command::App(cmd) => self.run_app(*cmd),
             Command::Doc(cmd) => {
                 let Some(tab) = self.active_tab_mut() else { return Task::none() };
-                if tab.read_only() {
+                if !tab.editable() {
                     return Task::none();
                 }
                 if let core_cmd::DocCommand::PasteTable { .. } = cmd {
@@ -1000,7 +1000,7 @@ impl App {
                     return Task::none();
                 }
                 let text = tab.doc.buffer().slice(range.clone()).into_owned();
-                if cmd == Cut && !tab.read_only() {
+                if cmd == Cut && tab.editable() {
                     let txn = tab.doc.next_txn();
                     tab.apply(&Edit { range: range.clone(), text: String::new(), origin: EditOrigin::User, txn });
                     tab.set_selection(Selection::cursor(range.start));
@@ -1009,7 +1009,7 @@ impl App {
             }
             Paste => {
                 let Some(tab) = self.active_tab() else { return Task::none() };
-                if tab.read_only() {
+                if !tab.editable() {
                     return Task::none();
                 }
                 let id = tab.id;
@@ -1046,6 +1046,18 @@ impl App {
                 }
             }
             ToggleSidebar => self.sidebar.visible = !self.sidebar.visible,
+            ToggleViewOnly => {
+                let Some(tab) = self.active_tab() else { return Task::none() };
+                let on = !(tab.mode == Mode::View && tab.view.read_only);
+                if tab.mode != Mode::View {
+                    self.set_mode(Mode::View);
+                }
+                if let Some(tab) = self.active_tab_mut()
+                    && tab.mode == Mode::View
+                {
+                    tab.view.read_only = on;
+                }
+            }
             ToggleComments => self.comments_visible = !self.comments_visible,
             ShowFiles => return self.show_sidebar(SidebarTab::Files),
             ShowOutline => return self.show_sidebar(SidebarTab::Outline),
@@ -1188,6 +1200,7 @@ impl App {
             tab.set_selection(sel);
             tab.editor.scroll_y = t.scroll_y;
             tab.view.scroll_y = t.scroll_y;
+            tab.view.read_only = t.view_only;
         }
         self.session.push_recent(&path);
 
@@ -1393,6 +1406,7 @@ impl App {
                     anchor: sel.anchor,
                     head: sel.head,
                     scroll_y: if t.mode == Mode::View { t.view.scroll_y } else { t.editor.scroll_y },
+                    view_only: t.view.read_only,
                 })
             })
             .collect();
@@ -1502,7 +1516,7 @@ impl App {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
-                if !tab.read_only() && tab.mode == Mode::View {
+                if tab.editable() && tab.mode == Mode::View {
                     tab.apply(&edit);
                 }
             }

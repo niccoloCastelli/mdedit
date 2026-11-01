@@ -31,6 +31,8 @@ pub struct TabSession {
     pub anchor: usize,
     pub head: usize,
     pub scroll_y: f32,
+    /// View mode without editing.
+    pub view_only: bool,
 }
 
 pub const MAX_RECENT: usize = 50;
@@ -62,7 +64,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state/session.toml");
         let mut s = Session {
-            tabs: vec![TabSession { path: "/a.md".into(), mode: Mode::Split, anchor: 3, head: 9, scroll_y: 120.5 }],
+            tabs: vec![TabSession {
+                path: "/a.md".into(),
+                mode: Mode::Split,
+                anchor: 3,
+                head: 9,
+                scroll_y: 120.5,
+                view_only: true,
+            }],
             active: 0,
             sidebar_visible: true,
             sidebar_tab: "outline".into(),
