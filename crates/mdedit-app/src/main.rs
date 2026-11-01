@@ -5,6 +5,7 @@ mod command;
 mod context;
 mod keymap;
 mod palette;
+mod separator;
 mod session;
 mod settings;
 mod style;

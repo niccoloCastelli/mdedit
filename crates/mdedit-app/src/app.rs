@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{Key, Modifiers, key::Named};
-use iced::{Event, Point, Rectangle, Size, Subscription, Task, event, mouse, window};
+use iced::{Event, Point, Rectangle, Size, Subscription, Task, event, window};
 use mdedit_core::command as core_cmd;
 use mdedit_core::document::SavePoint;
 use mdedit_core::parse::OutlineEntry;
@@ -128,9 +128,11 @@ pub enum Message {
     PasteTable(TabId, Option<String>),
     SetMode(Mode),
     Sidebar(SidebarTab),
-    SidebarDragStart,
-    SidebarDrag(Point),
+    /// Sidebar separator dragged to this window x.
+    SidebarDrag(f32),
     SidebarDragEnd,
+    /// Split separator dragged to this window x.
+    SplitDrag(f32),
     OutlineJump(usize),
     SearchQuery(String),
     SearchJump(usize, usize),
@@ -185,10 +187,6 @@ impl Default for FormatToolbar {
     }
 }
 
-/// The spec's 180 px minimum is too narrow for the Files/Outline/Search/Git
-/// switcher, so the sidebar stops where all four still fit.
-const SIDEBAR_MIN: f32 = 200.0;
-
 const TOOLBAR_DELAY: Duration = Duration::from_millis(150);
 
 pub struct SidebarState {
@@ -227,7 +225,8 @@ pub struct App {
     /// Session tabs still loading, in their saved order.
     restoring: Vec<TabSession>,
     restore_active: Option<PathBuf>,
-    dragging_sidebar: bool,
+    /// Editor share of the Split view (DESIGN_SYSTEM 6: 50/50, draggable).
+    pub split_ratio: f32,
     session_dirty: bool,
     quitting: bool,
     close_after_save: Vec<TabId>,
@@ -276,7 +275,7 @@ impl App {
                 visible: if fresh { true } else { session.sidebar_visible },
                 tab: SidebarTab::from_key(&session.sidebar_tab),
                 width: if session.sidebar_width > 0.0 {
-                    session.sidebar_width.clamp(SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX)
+                    session.sidebar_width.clamp(mdedit_theme::space::SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX)
                 } else {
                     mdedit_theme::space::SIDEBAR_WIDTH
                 },
@@ -306,7 +305,7 @@ impl App {
             restoring: session.tabs.clone(),
             restore_active: session.tabs.get(session.active).map(|t| t.path.clone()),
             session,
-            dragging_sidebar: false,
+            split_ratio: 0.5,
             session_dirty: false,
             quitting: false,
             close_after_save: Vec::new(),
@@ -498,13 +497,6 @@ impl App {
         if self.session_dirty {
             subs.push(iced::time::every(Duration::from_secs(2)).map(|_| Message::SessionTick));
         }
-        if self.dragging_sidebar {
-            subs.push(event::listen_with(|event, _, _| match event {
-                Event::Mouse(mouse::Event::CursorMoved { position }) => Some(Message::SidebarDrag(position)),
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::SidebarDragEnd),
-                _ => None,
-            }));
-        }
         Subscription::batch(subs)
     }
 
@@ -513,6 +505,14 @@ impl App {
         v.sort();
         v.dedup();
         v
+    }
+
+    /// Window x and width of the document area, between the sidebar and
+    /// the comments panel (for the Split separator).
+    fn document_span(&self) -> (f32, f32) {
+        let left = if self.sidebar.visible { self.sidebar.width + crate::separator::HIT } else { 0.0 };
+        let right = if self.comments_visible { mdedit_theme::space::COMMENTS_WIDTH + 1.0 } else { 0.0 };
+        (left, self.window_size.width - left - right)
     }
 
     /// Focus the widget that takes typing in the active tab's mode.
@@ -705,13 +705,15 @@ impl App {
                     return iced::widget::operation::focus(SEARCH_INPUT);
                 }
             }
-            Message::SidebarDragStart => self.dragging_sidebar = true,
-            Message::SidebarDrag(p) => {
-                self.sidebar.width = p.x.clamp(SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX);
+            Message::SidebarDrag(x) => {
+                self.sidebar.width = x.clamp(mdedit_theme::space::SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX);
             }
-            Message::SidebarDragEnd => {
-                self.dragging_sidebar = false;
-                self.save_session();
+            Message::SidebarDragEnd => self.save_session(),
+            Message::SplitDrag(x) => {
+                let (left, width) = self.document_span();
+                if width > 0.0 {
+                    self.split_ratio = ((x - left) / width).clamp(0.2, 0.8);
+                }
             }
             Message::OutlineJump(byte) => {
                 if let Some(tab) = self.active_tab_mut() {

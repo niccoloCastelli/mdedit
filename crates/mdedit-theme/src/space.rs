@@ -24,7 +24,7 @@ pub const MOTION_BASE_MS: u64 = 150;
 pub const CURSOR_BLINK_MS: u64 = 530;
 
 pub const SIDEBAR_WIDTH: f32 = 240.0;
-pub const SIDEBAR_MIN: f32 = 180.0;
+pub const SIDEBAR_MIN: f32 = 200.0;
 pub const SIDEBAR_MAX: f32 = 400.0;
 pub const COMMENTS_WIDTH: f32 = 300.0;
 pub const STATUS_BAR_HEIGHT: f32 = 24.0;
