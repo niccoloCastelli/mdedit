@@ -327,8 +327,7 @@ impl BlockIndex {
                 let indented = buf.line(buf.byte_to_line(start)).starts_with([' ', '\t']);
                 match first.checked_sub(1).and_then(|p| self.blocks.get(p)) {
                     Some((r, data))
-                        if indented
-                            && matches!(data.kind, BlockKind::List { .. } | BlockKind::FootnoteDefinition) =>
+                        if indented && matches!(data.kind, BlockKind::List { .. } | BlockKind::FootnoteDefinition) =>
                     {
                         first -= 1;
                         start = buf.line_to_byte(buf.byte_to_line(r.start));
@@ -346,10 +345,9 @@ impl BlockIndex {
                 .map(|(r, _)| r.start);
             if first > 0
                 && let Some((r, data)) = self.blocks.get(first - 1)
-                && let claims = matches!(
-                    data.kind,
-                    BlockKind::List { .. } | BlockKind::BlockQuote | BlockKind::FootnoteDefinition
-                ) && r.end >= prev_start
+                && let claims =
+                    matches!(data.kind, BlockKind::List { .. } | BlockKind::BlockQuote | BlockKind::FootnoteDefinition)
+                && r.end >= prev_start
                 && (claims || new_start.is_some_and(|d| r.end > d))
             {
                 first -= 1;
