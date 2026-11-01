@@ -108,9 +108,15 @@ impl Settings {
         })
     }
 
-    fn doc(&self, markdown: &str, options: &ExportOptions) -> ast::Doc {
+    /// Parse the document. Hand-numbered headings (`## 1. Goals`) keep
+    /// their own numbers and turn automatic numbering off.
+    fn doc(&mut self, markdown: &str, options: &ExportOptions) -> ast::Doc {
         let comments = if self.include_comments { options.comments.as_slice() } else { &[] };
-        ast::Doc::parse(markdown, comments)
+        let doc = ast::Doc::parse(markdown, comments);
+        if doc.has_manual_numbers() {
+            self.template.heading_numbers = false;
+        }
+        doc
     }
 }
 
@@ -122,7 +128,7 @@ pub fn export(
     options: &ExportOptions,
     format: ExportFormat,
 ) -> Result<Vec<u8>, ExportError> {
-    let settings = Settings::new(template, options)?;
+    let mut settings = Settings::new(template, options)?;
     let doc = settings.doc(markdown, options);
     match format {
         ExportFormat::Pdf => {
@@ -160,7 +166,7 @@ pub fn export_to_file(
 /// debugging a `template.typ`). Images are referenced as `/__img/<url>`
 /// without checking that they exist.
 pub fn typst_source(markdown: &str, template: &Template, options: &ExportOptions) -> Result<TypstFiles, ExportError> {
-    let settings = Settings::new(template, options)?;
+    let mut settings = Settings::new(template, options)?;
     let doc = settings.doc(markdown, options);
     Ok(typst_markup::convert(&doc, &settings, &mut |url| Some(format!("/__img/{url}"))))
 }
@@ -173,7 +179,7 @@ pub fn docx_parts(
     template: &Template,
     options: &ExportOptions,
 ) -> Result<DocxParts, ExportError> {
-    let settings = Settings::new(template, options)?;
+    let mut settings = Settings::new(template, options)?;
     let doc = settings.doc(markdown, options);
     Ok(docx::parts(&doc, &settings, &mut |url| read_image(base_dir, url)))
 }

@@ -167,6 +167,21 @@ impl Doc {
         }
     }
 
+    /// True when every level-1 body heading already starts with its own
+    /// number (`1.`, `2)`, `6.1`, `01`), as hand-numbered documents do.
+    /// Automatic numbering would then print each number twice.
+    pub fn has_manual_numbers(&self) -> bool {
+        let mut top = self.blocks.iter().filter_map(|b| match b {
+            Block::Heading { level: 1, content, .. } => Some(plain_text(content)),
+            _ => None,
+        });
+        let mut any = false;
+        top.all(|text| {
+            any = true;
+            starts_with_number(&text)
+        }) && any
+    }
+
     /// Slugs of all headings, for resolving `#anchor` links.
     pub fn slugs(&self) -> HashSet<&str> {
         self.blocks
@@ -549,8 +564,44 @@ fn callout(kind: Option<BlockQuoteKind>, mut blocks: Vec<Block>) -> Block {
     Block::Quote(blocks)
 }
 
+/// `1 `, `1. `, `2) `, `6.1 `, `01 `: digits, optional `.digits` groups,
+/// an optional `.` or `)`, then whitespace.
+fn starts_with_number(text: &str) -> bool {
+    let rest = text.trim_start();
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return false;
+    }
+    let mut rest = &rest[digits..];
+    while let Some(after) = rest.strip_prefix('.') {
+        let n = after.bytes().take_while(u8::is_ascii_digit).count();
+        if n == 0 {
+            break;
+        }
+        rest = &after[n..];
+    }
+    let rest = rest.strip_prefix(['.', ')']).unwrap_or(rest);
+    rest.starts_with(char::is_whitespace)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn manual_heading_numbers() {
+        for yes in ["1. Goals", "2) Releases", "6.1 Layout", "01 Intro", "10. Export"] {
+            assert!(super::starts_with_number(yes), "{yes}");
+        }
+        for no in ["1.5x faster", "Goals", "3D printing", "v1. Notes"] {
+            assert!(!super::starts_with_number(no), "{no}");
+        }
+        let numbered = super::Doc::parse("# Spec\n\n## 1. Goals\n\n### 1.1 Sub\n\n## 2. Releases\n", &[]);
+        assert!(numbered.has_manual_numbers());
+        let mixed = super::Doc::parse("# Spec\n\n## 1. Goals\n\n## Releases\n", &[]);
+        assert!(!mixed.has_manual_numbers());
+        let none = super::Doc::parse("## Goals\n", &[]);
+        assert!(!none.has_manual_numbers());
+    }
+
     use super::*;
 
     fn text(s: &str) -> Inline {
