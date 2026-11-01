@@ -1,0 +1,15 @@
+[package]
+name = "mdedit-git"
+description = "Project versioning: autocommit, checkpoints, branches, sync (gix; optional libgit2 push)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Push via libgit2 (the only non-Rust dependency). Without it the editor
+# works normally and push is shown disabled (SPEC 6.5, ARCHITECTURE 7).
+push = ["dep:git2"]
+
+[dependencies]
+thiserror.workspace = true
+git2 = { workspace = true, optional = true }

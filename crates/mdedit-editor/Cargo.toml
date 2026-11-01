@@ -1,0 +1,11 @@
+[package]
+name = "mdedit-editor"
+description = "Edit-mode widget: virtualised markdown source editor for iced"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mdedit-core.workspace = true
+mdedit-theme = { workspace = true, features = ["iced"] }
+iced.workspace = true

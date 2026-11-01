@@ -1,0 +1,10 @@
+[package]
+name = "mdedit-render"
+description = "GPU-free layout model of rendered markdown, shared by View mode and export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mdedit-core.workspace = true
+pulldown-cmark.workspace = true

@@ -14,15 +14,21 @@ The repo becomes a Cargo workspace. Only `mdedit-app` depends on iced.
 crates/
   mdedit-core/      buffer, edit log, document, block index, parser, search, commands
   mdedit-render/    layout model shared by the app and export (no GPU code)
-  mdedit-project/   project.toml, file tree, assets, sidecar, watcher
+  mdedit-project/   project.toml, file tree, assets, watcher
+  mdedit-sidecar/   sidecar TOML, comments, anchoring (also for loose files)
   mdedit-git/       versioning: autocommit, checkpoints, branches, sync
   mdedit-export/    AST → Typst → PDF, AST → DOCX, templates
   mdedit-theme/     theme/token loading, built-in themes, contrast tests
-  mdedit-app/       iced application, widgets, keymap, menus (binary: mdedit)
+  mdedit-editor/    Edit-mode widget (iced)
+  mdedit-view/      View/Split widget (iced)
+  mdedit-app/       iced application shell, keymap, menus (binary: mdedit)
   (later) mdedit-mcp/  MCP server over the core command API
 ```
 
-Dependency rule: `app → {render, project, git, export, theme} → core`. Core
+Dependency rule: `app → {editor, view, render, project, sidecar, git, export, theme} → core`;
+only `editor`, `view` and `app` depend on iced. (Sidecar, editor and view were
+split out in the M0 skeleton so workstreams can run in parallel; see
+[PLAN.md](PLAN.md).) Core
 depends on nothing UI-related, so it is fully unit-testable and usable from a
 headless MCP server.
 

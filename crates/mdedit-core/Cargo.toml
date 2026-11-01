@@ -1,0 +1,14 @@
+[package]
+name = "mdedit-core"
+description = "UI-free document core: buffers, edit log, block index, parser, search, commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ropey.workspace = true
+pulldown-cmark.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

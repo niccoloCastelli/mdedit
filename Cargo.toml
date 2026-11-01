@@ -1,23 +1,76 @@
-[package]
-name = "mdedit"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/mdedit-app"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "A fast, lightweight, cross-platform markdown editor"
 license = "MIT OR Apache-2.0"
 
-[dependencies]
-# GUI. `advanced` exposes the widget/renderer traits needed for a custom
-# editor widget that only lays out the visible lines; `canvas` is there for
-# custom drawing (gutter, cursor, selections); `tokio` runs async tasks such
-# as file I/O off the UI thread.
-iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }
-# Rope text buffer: O(log n) edits and line lookups on large files.
-ropey = "1.6"
-# Markdown parsing. Fast pull parser; reparse only the blocks touched by an edit.
-pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+# Every third-party dependency the plan expects is declared here, so a
+# workstream adds `foo.workspace = true` to its own crate instead of editing
+# this file. Declared but unused entries cost nothing (they are not resolved
+# until a crate uses them). Bump versions here, in one place.
+[workspace.dependencies]
+# Internal crates
+mdedit-core = { path = "crates/mdedit-core" }
+mdedit-render = { path = "crates/mdedit-render" }
+mdedit-theme = { path = "crates/mdedit-theme" }
+mdedit-project = { path = "crates/mdedit-project" }
+mdedit-sidecar = { path = "crates/mdedit-sidecar" }
+mdedit-git = { path = "crates/mdedit-git" }
+mdedit-export = { path = "crates/mdedit-export" }
+mdedit-editor = { path = "crates/mdedit-editor" }
+mdedit-view = { path = "crates/mdedit-view" }
+
+# GUI. `advanced` exposes the widget/renderer traits needed for custom widgets
+# that only lay out what is visible; `canvas` for custom drawing; `tokio` runs
+# async tasks off the UI thread; `svg` for Lucide icons (and math later).
+iced = { version = "0.14", features = ["advanced", "canvas", "tokio", "svg"] }
 # Native open/save dialogs (XDG portal on Linux, no GTK dev headers needed).
 rfd = "0.17"
-tokio = { version = "1", features = ["fs"] }
+tokio = { version = "1", features = ["fs", "rt", "sync", "time"] }
+
+# Core
+# Default features off: line breaks are LF, CRLF and CR only (what
+# CommonMark recognises), not the extra Unicode separators.
+ropey = { version = "1.6", default-features = false, features = ["simd", "cr_lines"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+memmap2 = "0.9"
+memchr = "2"
+regex = "1"
+regex-automata = "0.4"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+thiserror = "2"
+
+# Data files
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+jiff = { version = "0.2", features = ["serde"] }
+directories = "6"
+sha2 = "0.11"
+notify = "8"
+notify-debouncer-full = "0.5"
+
+# Git (pure Rust); git2 only behind mdedit-git's optional `push` feature.
+gix = { version = "0.90", default-features = false }
+git2 = { version = "0.21", default-features = false }
+keyring = "4"
+
+# Export
+typst = "0.15"
+typst-pdf = "0.15"
+typst-svg = "0.15"
+docx-rs = "0.4"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+# Dev
+proptest = "1"
+criterion = "0.8"
+tempfile = "3"
 
 [profile.release]
 lto = "thin"

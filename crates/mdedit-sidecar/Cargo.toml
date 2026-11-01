@@ -1,0 +1,13 @@
+[package]
+name = "mdedit-sidecar"
+description = "Per-file sidecar (.name.md.toml): comments, anchors and re-anchoring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mdedit-core.workspace = true
+serde.workspace = true
+toml.workspace = true
+jiff.workspace = true
+thiserror.workspace = true

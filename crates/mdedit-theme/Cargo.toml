@@ -1,0 +1,13 @@
+[package]
+name = "mdedit-theme"
+description = "Design tokens, themes (TOML), typography and spacing scales"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Conversions to iced types, for the crates that draw.
+iced = ["dep:iced"]
+
+[dependencies]
+iced = { workspace = true, optional = true }
