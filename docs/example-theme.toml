@@ -1,0 +1,80 @@
+# Example mdedit theme: "Ember Sepia", a warm book-style light theme.
+#
+# Install: copy this file into the user theme directory and pick it in
+# Settings > Appearance (or set `light-theme = "ember-sepia"` in
+# settings.toml). The theme's id is the file name without `.toml`.
+#
+#   Linux    ~/.config/mdedit/themes/ember-sepia.toml
+#   others   `themes/` in the platform config directory (the `directories`
+#            crate's ProjectDirs config dir for "mdedit")
+#
+# Rules (DESIGN_SYSTEM 2.5):
+# - Every colour is `#RRGGBB`, `#RRGGBBAA`, or the name of another token
+#   ("text-muted"). References resolve after inheritance, so overriding
+#   `text-muted` also changes everything that points at it.
+# - `extends` inherits every value you do not set. Without `extends`, a
+#   theme inherits from the built-in theme of its `kind` (ember-light or
+#   ember-dark), so a theme only needs the tokens it changes.
+# - Text tokens should meet WCAG AA (4.5:1) against the background they
+#   are drawn on; the app warns about pairs that do not.
+
+name = "Ember Sepia"
+kind = "light"              # light | dark
+extends = "ember-light"     # ember-light | ember-dark | another theme id
+
+# Shadow under menus, popovers and dialogs (DESIGN_SYSTEM 4.3).
+shadow = "#2B26201F"
+
+# Semantic colour tokens (DESIGN_SYSTEM 2.1). All are listed here for
+# reference; in practice you can delete any line you do not change.
+[color]
+bg = "#F8F1E3"                # window and document background
+bg-subtle = "#EFE6D3"         # sidebar, table header, inline code
+surface = "#FBF6EC"           # cards, popovers, menus
+surface-raised = "#F3EBDA"    # hovered menu item, active tab
+border = "#E0D4BC"            # 1 px dividers, card outlines
+border-strong = "#C9BB9F"     # input outlines
+text = "#2B2620"              # body text and headings
+text-secondary = "#5A5045"    # lead paragraphs, UI labels
+text-muted = "#6B6153"        # placeholders, line numbers, timestamps
+accent = "#B5532A"            # primary buttons, focus ring, cursor
+accent-text = "#9A4220"       # accent as small text (links)
+accent-soft = "#F2DCCB"       # selection, badges
+on-accent = "#FFFFFF"         # text on an accent fill
+warning-bg = "#F3E2B8"        # callouts, large-file banner
+warning-text = "#7A5000"
+danger = "#A3242F"
+success = "#3B6E3F"
+info = "#2C5F94"
+comment-highlight = "warning-bg"
+
+# Font families by role (DESIGN_SYSTEM 3.1). Bundled: Hanken Grotesk,
+# JetBrains Mono, Source Serif 4. Other installed fonts work too.
+[font]
+ui = "Hanken Grotesk"
+prose = "Source Serif 4"
+mono = "JetBrains Mono"
+
+# Markdown source styling in Edit mode (DESIGN_SYSTEM 2.4). Each key is a
+# `syntax-<key>` token.
+[syntax]
+marker = "text-muted"         # # * _ ` > bullets, fences, |
+heading = "text"
+emphasis = "text"
+link = "accent-text"
+url = "text-muted"
+code = "text-secondary"       # inline code and code blocks
+code-bg = "bg-subtle"
+html = "info"
+math = "info"
+
+# Fenced code highlighting. Keys are syntect (TextMate) scope selectors;
+# values are a colour or { color, bold, italic }. The most specific
+# selector wins; unlisted scopes use `syntax-code`. Rules merge with the
+# parent theme's, so list only what you change.
+[code]
+"comment" = { color = "text-muted", italic = true }
+"string" = "#4D6B2F"
+"markup.inserted" = "#4D6B2F"
+"entity.name.function" = "#6A4596"
+"support.function" = "#6A4596"
