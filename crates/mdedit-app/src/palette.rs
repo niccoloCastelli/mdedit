@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub enum Scope {
     Commands,
     Files,
+    Projects,
 }
 
 #[derive(Debug, Clone)]
@@ -22,20 +23,21 @@ pub enum Item {
     Command { id: &'static str, title: &'static str, shortcut: Option<String> },
     Tab { index: usize, title: String, detail: String },
     Recent { path: PathBuf, title: String, detail: String },
+    Project { path: PathBuf, title: String, detail: String },
 }
 
 impl Item {
     pub fn title(&self) -> &str {
         match self {
             Item::Command { title, .. } => title,
-            Item::Tab { title, .. } | Item::Recent { title, .. } => title,
+            Item::Tab { title, .. } | Item::Recent { title, .. } | Item::Project { title, .. } => title,
         }
     }
 
     pub fn detail(&self) -> Option<&str> {
         match self {
             Item::Command { shortcut, .. } => shortcut.as_deref(),
-            Item::Tab { detail, .. } | Item::Recent { detail, .. } => Some(detail),
+            Item::Tab { detail, .. } | Item::Recent { detail, .. } | Item::Project { detail, .. } => Some(detail),
         }
     }
 }
@@ -58,7 +60,9 @@ impl Palette {
             .filter_map(|(i, item)| {
                 let hay = match &item {
                     Item::Command { id, title, .. } => format!("{title} {id}"),
-                    Item::Tab { title, detail, .. } | Item::Recent { title, detail, .. } => format!("{title} {detail}"),
+                    Item::Tab { title, detail, .. }
+                    | Item::Recent { title, detail, .. }
+                    | Item::Project { title, detail, .. } => format!("{title} {detail}"),
                 };
                 fuzzy_score(&self.query, &hay).map(|s| (s, i, item))
             })

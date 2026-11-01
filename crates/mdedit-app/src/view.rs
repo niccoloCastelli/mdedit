@@ -508,12 +508,38 @@ impl App {
         if let Some(tree) = self.project_files_panel() {
             return tree;
         }
+        let heading = |s: &'static str| {
+            container(text(s).size(UI_SMALL).font(bold()).color(c(t, T::TextMuted)))
+                .padding(Padding::from([SPACE_2, 0.0]).bottom(SPACE_1))
+        };
         let mut col = column![
-            text("Open a folder as a project to browse its files. Recent files:")
+            text("No project open. A project is a folder with a file tree and automatic versioning.")
                 .size(UI_SMALL)
-                .color(c(t, T::TextMuted))
+                .color(c(t, T::TextMuted)),
+            container(small_button(t, "Open Folder…", Btn::Secondary, Some(Message::Run("file.open_folder"))))
+                .padding(Padding::from([SPACE_2, 0.0])),
         ]
         .spacing(2);
+        let projects: Vec<&std::path::PathBuf> = self.session.recent_projects.iter().filter(|d| d.is_dir()).collect();
+        if !projects.is_empty() {
+            col = col.push(heading("RECENT PROJECTS"));
+        }
+        for dir in projects {
+            let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            col = col.push(
+                tooltip(
+                    sidebar_row(t, text(name).size(UI), Message::OpenFolder(dir.clone()), 0.0),
+                    container(text(dir.display().to_string()).size(UI_SMALL))
+                        .padding(SPACE_1)
+                        .style(style::popover(t, RADIUS_SM)),
+                    tooltip::Position::Bottom,
+                )
+                .delay(std::time::Duration::from_millis(500)),
+            );
+        }
+        if !self.session.recent.is_empty() {
+            col = col.push(heading("RECENT FILES"));
+        }
         for path in self.session.recent.iter().take(20) {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             col = col.push(
@@ -689,6 +715,7 @@ impl App {
         let placeholder = match p.scope {
             Scope::Commands => "Type a command",
             Scope::Files => "Go to file (open tabs and recent files)",
+            Scope::Projects => "Open a recent project",
         };
         let input = text_input(placeholder, &p.query)
             .id(PALETTE_INPUT)

@@ -40,6 +40,10 @@ pub struct ProjectState {
     autosave_seen: HashMap<TabId, (u64, Instant)>,
     /// Branch to switch to once pending saves are done.
     pending_switch: Option<String>,
+    /// Close Project is waiting for the project's tabs to save and close.
+    closing: bool,
+    /// Folder to open once the project has closed.
+    open_next: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -307,6 +311,9 @@ impl App {
 
     /// Open `dir` as a project, or offer to make it one (SPEC 6).
     pub(super) fn open_folder(&mut self, dir: PathBuf) -> Task<Message> {
+        if self.project_root().is_some_and(|r| r != dir) {
+            return self.close_project_then(Some(dir));
+        }
         if !Project::is_project(&dir) {
             let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             self.prompt = Some(Prompt {
@@ -369,7 +376,10 @@ impl App {
             _watcher: watcher,
             autosave_seen: HashMap::new(),
             pending_switch: None,
+            closing: false,
+            open_next: None,
         });
+        self.session.push_recent_project(&root);
         self.session.last_dir = Some(root);
         // Show the tree, unless the sidebar is already on the Git panel
         // (a restored session).
@@ -393,6 +403,55 @@ impl App {
     }
 
     /// Flush the pending autocommit and forget the project.
+    /// Close Project: save and close the project's tabs, then leave project
+    /// mode (and open `next`, when switching projects).
+    pub(super) fn close_project_then(&mut self, next: Option<PathBuf>) -> Task<Message> {
+        let Some(p) = &mut self.project else {
+            return next.map_or_else(Task::none, |d| self.open_folder(d));
+        };
+        p.closing = true;
+        p.open_next = next;
+        p.history = None;
+        let root = p.project.root.clone();
+        self.prompt = None;
+        let tabs: Vec<(TabId, bool, bool)> = self
+            .tabs
+            .iter()
+            .filter(|t| t.doc.path.as_deref().is_some_and(|p| p.starts_with(&root)))
+            .map(|t| (t.id, t.is_dirty() && !t.read_only(), t.saving))
+            .collect();
+        let mut tasks = Vec::new();
+        for (id, dirty, saving) in tabs {
+            if dirty || saving {
+                if !self.close_after_save.contains(&id) {
+                    self.close_after_save.push(id);
+                    if !saving {
+                        tasks.push(self.start_save(id, None));
+                    }
+                }
+            } else if let Some(i) = self.tab_index(id) {
+                self.close_tab_now(i);
+            }
+        }
+        tasks.push(self.finish_close_project());
+        Task::batch(tasks)
+    }
+
+    /// Hook (after a tab closed): finish a Close Project once none of the
+    /// project's tabs is left.
+    pub(super) fn finish_close_project(&mut self) -> Task<Message> {
+        let Some(p) = &self.project else { return Task::none() };
+        if !p.closing || self.tabs.iter().any(|t| t.doc.path.as_deref().is_some_and(|x| self.in_project(x))) {
+            return Task::none();
+        }
+        let next = p.open_next.clone();
+        self.close_project();
+        match next {
+            Some(dir) => self.open_folder(dir),
+            None => Task::none(),
+        }
+    }
+
     pub(super) fn close_project(&mut self) {
         if let Some(p) = self.project.take()
             && let Some(w) = &p.worker
@@ -1050,7 +1109,7 @@ impl App {
     /// Hook: project commands (menus, palette, keymap).
     pub(super) fn project_command(&mut self, cmd: AppCommand) -> Task<Message> {
         use AppCommand::*;
-        let needs_project = !matches!(cmd, OpenFolder);
+        let needs_project = !matches!(cmd, OpenFolder | OpenRecentProject);
         if needs_project && self.project.is_none() {
             self.toast("Open a folder as a project first (File → Open Folder…).");
             return Task::none();
@@ -1072,10 +1131,12 @@ impl App {
                     },
                 )
             }
-            CloseFolder => {
-                self.close_project();
-                Task::none()
+            OpenRecentProject => {
+                self.palette = Some(crate::palette::Palette::new(Scope::Projects));
+                self.menu_open = None;
+                iced::widget::operation::focus(PALETTE_INPUT)
             }
+            CloseFolder => self.close_project_then(None),
             ProjectNewFile => self.on_project(Msg::NewFile),
             ProjectNewFolder => self.on_project(Msg::NewFolder),
             Checkpoint => self.ask_checkpoint(false),
@@ -1090,6 +1151,9 @@ impl App {
     pub fn project_command_enabled(&self, id: &str) -> Option<bool> {
         match id {
             "file.open_folder" => Some(true),
+            "file.recent_projects" => Some(
+                self.session.recent_projects.iter().any(|d| d.is_dir() && Some(d.as_path()) != self.project_root()),
+            ),
             "file.close_folder" | "project.new_file" | "project.new_folder" => Some(self.project.is_some()),
             id if id.starts_with("git.") => Some(self.project.as_ref().is_some_and(|p| p.git.is_some())),
             _ => None,

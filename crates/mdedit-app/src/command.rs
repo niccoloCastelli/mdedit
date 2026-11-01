@@ -22,6 +22,7 @@ pub enum AppCommand {
     NewFile,
     Open,
     OpenFolder,
+    OpenRecentProject,
     CloseFolder,
     ProjectNewFile,
     ProjectNewFolder,
@@ -102,7 +103,8 @@ app_commands! {
     NewFile, "file.new", "New File", Some("file-plus"), Some("Ctrl+N");
     Open, "file.open", "Open File…", Some("folder-open"), Some("Ctrl+O");
     OpenFolder, "file.open_folder", "Open Folder…", Some("folder-open"), None;
-    CloseFolder, "file.close_folder", "Close Folder", None, None;
+    OpenRecentProject, "file.recent_projects", "Open Recent Project…", Some("folder"), None;
+    CloseFolder, "file.close_folder", "Close Project", Some("x"), None;
     ProjectNewFile, "project.new_file", "New File in Project…", Some("file-plus"), None;
     ProjectNewFolder, "project.new_folder", "New Folder…", Some("folder-plus"), None;
     Checkpoint, "git.checkpoint", "Checkpoint…", Some("tag"), Some("Ctrl+Alt+S");
@@ -209,6 +211,7 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("file.new"),
                 Some("file.open"),
                 Some("file.open_folder"),
+                Some("file.recent_projects"),
                 Some("view.quick_open"),
                 None,
                 Some("file.save"),
