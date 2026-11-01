@@ -201,6 +201,7 @@ pub struct SearchState {
 pub const PALETTE_INPUT: &str = "palette-input";
 pub const SEARCH_INPUT: &str = "sidebar-search";
 pub const EDITOR: &str = "editor";
+pub const VIEW: &str = "view";
 const MAX_SEARCH_RESULTS: usize = 500;
 
 impl App {
@@ -456,6 +457,14 @@ impl App {
         v
     }
 
+    /// Focus the widget that takes typing in the active tab's mode.
+    fn focus_document(&self) -> Task<Message> {
+        match self.active_tab().map(|t| t.mode) {
+            Some(Mode::View) => iced::widget::operation::focus(VIEW),
+            _ => iced::widget::operation::focus(EDITOR),
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let focus_key = |a: &Self| (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), a.dialog.is_some());
         let before = focus_key(self);
@@ -467,7 +476,7 @@ impl App {
         // modal layer changes, and after jumping from the sidebar.
         let after = focus_key(self);
         let task = if (before != after || jump) && !after.1 && !after.2 {
-            Task::batch([task, iced::widget::operation::focus(EDITOR)])
+            Task::batch([task, self.focus_document()])
         } else {
             task
         };
