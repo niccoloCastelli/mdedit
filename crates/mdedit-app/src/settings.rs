@@ -40,6 +40,30 @@ pub struct Appearance {
     pub zoom: f32,
     /// UI chrome scale, separate from the document zoom.
     pub ui_scale: f32,
+    /// Window title bar; read at start-up.
+    pub title_bar: TitleBar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TitleBar {
+    /// Our own title bar everywhere except macOS.
+    #[default]
+    Auto,
+    /// Minimise/maximise/close drawn in the menu bar, no OS decorations.
+    Custom,
+    /// The OS title bar.
+    System,
+}
+
+impl Appearance {
+    pub fn custom_title_bar(&self) -> bool {
+        match self.title_bar {
+            TitleBar::Auto => !cfg!(target_os = "macos"),
+            TitleBar::Custom => true,
+            TitleBar::System => false,
+        }
+    }
 }
 
 impl Default for Appearance {
@@ -50,6 +74,7 @@ impl Default for Appearance {
             dark_theme: "ember-dark".into(),
             zoom: 1.0,
             ui_scale: 1.0,
+            title_bar: TitleBar::Auto,
         }
     }
 }
@@ -238,6 +263,7 @@ light_theme = "ember-light"
 dark_theme = "ember-dark"
 zoom = 1.0
 ui_scale = 1.0
+title_bar = "auto"         # auto | custom | system (applies on restart)
 
 [fonts]
 ui = ""                    # empty = the theme's font

@@ -19,6 +19,7 @@ fn main() -> iced::Result {
     trace::start();
     prefer_vulkan();
     let ui_font = style::font(&mdedit_theme::Fonts::default().ui);
+    let (settings, _) = settings::Settings::load(&settings::Paths::detect().settings());
     let app = iced::application(App::new, App::update, App::view)
         .title(App::title)
         .theme(App::iced_theme)
@@ -26,6 +27,7 @@ fn main() -> iced::Result {
         .scale_factor(App::scale_factor)
         .default_font(ui_font)
         .exit_on_close_request(false)
+        .decorations(!settings.appearance.custom_title_bar())
         .window_size((1200.0, 800.0));
     mdedit_theme::fonts().fold(app, |app, bytes| app.font(bytes)).run()
 }

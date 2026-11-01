@@ -12,7 +12,7 @@ use mdedit_theme::{ColorToken as T, Theme};
 use crate::app::{
     App, BannerAction, Dialog, DialogChoice, Message, PALETTE_INPUT, PaletteMsg, SEARCH_INPUT, SidebarTab,
 };
-use crate::app::{EDITOR, VIEW};
+use crate::app::{EDITOR, VIEW, WindowCmd};
 use crate::command;
 use crate::palette::{self, Scope};
 use crate::settings::Mode;
@@ -53,6 +53,9 @@ impl App {
                 .style(style::app_bg(t));
 
         let mut layers: Vec<Element<'_, Message>> = vec![base.into()];
+        if self.custom_title_bar && !self.maximized {
+            layers.push(resize_edges());
+        }
         if let Some(i) = self.menu_open {
             layers.push(self.menu_dropdown(i));
         }
@@ -92,7 +95,41 @@ impl App {
                 .on_press(Message::MenuOpen(Some(i)));
             bar = bar.push(mouse_area(b).on_enter(Message::MenuHover(i)));
         }
-        container(bar.padding(Padding::from([2.0, SPACE_1])))
+        if self.custom_title_bar {
+            let title =
+                text(self.title()).size(UI).color(c(t, T::TextMuted)).wrapping(iced::widget::text::Wrapping::None);
+            let grip = mouse_area(container(title).center(Length::Fill).clip(true))
+                .on_press(Message::Window(WindowCmd::Drag))
+                .on_double_click(Message::Window(WindowCmd::ToggleMaximize));
+            let window_button = |icon: &str, msg: Message, kind: Btn| -> Element<'_, Message> {
+                let glyph = iced::widget::svg(iced::widget::svg::Handle::from_memory(
+                    mdedit_theme::icon(icon).unwrap_or_default(),
+                ))
+                .width(14)
+                .height(14)
+                .style(move |_, status| iced::widget::svg::Style {
+                    color: Some(match status {
+                        iced::widget::svg::Status::Hovered if kind == Btn::Danger => c(t, T::OnAccent),
+                        iced::widget::svg::Status::Hovered => c(t, T::Text),
+                        _ => c(t, T::TextSecondary),
+                    }),
+                });
+                button(container(glyph).center(Length::Fill))
+                    .width(44)
+                    .height(MENU_BAR_HEIGHT)
+                    .padding(0)
+                    .style(style::window_button(t, kind == Btn::Danger))
+                    .on_press(msg)
+                    .into()
+            };
+            let maximize = if self.maximized { "minimize-2" } else { "maximize-2" };
+            bar = bar
+                .push(grip)
+                .push(window_button("minus", Message::Window(WindowCmd::Minimize), Btn::Ghost))
+                .push(window_button(maximize, Message::Window(WindowCmd::ToggleMaximize), Btn::Ghost))
+                .push(window_button("x", Message::CloseRequested, Btn::Danger));
+        }
+        container(bar.padding(Padding { top: 0.0, right: 0.0, bottom: 0.0, left: SPACE_1 }))
             .width(Length::Fill)
             .height(MENU_BAR_HEIGHT)
             .style(style::chrome(t))
@@ -773,4 +810,36 @@ fn modal<'a>(
     let placed =
         if centred { placed.center_y(Length::Fill) } else { placed.padding(Padding { top: 64.0, ..Padding::ZERO }) };
     stack![backdrop, placed].into()
+}
+
+/// Without OS decorations the window needs its own resize handles: thin
+/// strips along the edges and larger corners, over everything else.
+fn resize_edges<'a>() -> Element<'a, Message> {
+    use iced::mouse::Interaction as I;
+    use iced::window::Direction as D;
+    const EDGE: f32 = 4.0;
+    const CORNER: f32 = 10.0;
+    let handle = |w: Length, h: Length, dir: D, cursor: I| -> Element<'a, Message> {
+        mouse_area(container(Space::new()).width(w).height(h))
+            .on_press(Message::Window(WindowCmd::Resize(dir)))
+            .interaction(cursor)
+            .into()
+    };
+    let top = row![
+        handle(Length::Fixed(CORNER), Length::Fixed(EDGE), D::NorthWest, I::ResizingDiagonallyDown),
+        handle(Length::Fill, Length::Fixed(EDGE), D::North, I::ResizingVertically),
+        handle(Length::Fixed(CORNER), Length::Fixed(EDGE), D::NorthEast, I::ResizingDiagonallyUp),
+    ];
+    let bottom = row![
+        handle(Length::Fixed(CORNER), Length::Fixed(EDGE), D::SouthWest, I::ResizingDiagonallyUp),
+        handle(Length::Fill, Length::Fixed(EDGE), D::South, I::ResizingVertically),
+        handle(Length::Fixed(CORNER), Length::Fixed(EDGE), D::SouthEast, I::ResizingDiagonallyDown),
+    ];
+    let middle = row![
+        handle(Length::Fixed(EDGE), Length::Fill, D::West, I::ResizingHorizontally),
+        Space::new().width(Length::Fill).height(Length::Fill),
+        handle(Length::Fixed(EDGE), Length::Fill, D::East, I::ResizingHorizontally),
+    ]
+    .height(Length::Fill);
+    column![top, middle, bottom].width(Length::Fill).height(Length::Fill).into()
 }
