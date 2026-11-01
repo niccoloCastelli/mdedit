@@ -1,0 +1,20 @@
+# Report: serif body, decimal section numbers, a title page with a table
+# of contents, running header and page footer.
+name = "Report"
+style = "report"
+page_size = "a4"
+margins_mm = [25.0, 25.0, 25.0, 25.0]
+font_body = "Source Serif 4"
+font_heading = "Hanken Grotesk"
+font_mono = "JetBrains Mono"
+base_size_pt = 11.0
+line_height = 1.45
+accent = "#D9542B"
+heading_numbers = true
+number_style = "decimal"
+title_page = true
+toc = true
+lead = false
+header = "{title} | | {date}"
+footer = "{page}"
+code_theme = "ember-light"
