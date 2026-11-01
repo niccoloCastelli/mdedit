@@ -21,6 +21,8 @@ pub struct Session {
     pub last_dir: Option<PathBuf>,
     /// Most recent first, for Ctrl+P.
     pub recent: Vec<PathBuf>,
+    /// Folder open as a project, reopened at start.
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

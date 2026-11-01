@@ -689,3 +689,81 @@ fn ensure_ignored(root: &Path, pattern: &str) -> Result<()> {
     std::fs::write(path, text)?;
     Ok(())
 }
+
+/// Per-file history for the history and diff view (SPEC 6.3).
+impl Repo {
+    /// The identity from the git config (`user.name`, `user.email`), else
+    /// a placeholder; used when `project.toml` names no author.
+    pub fn default_author(&self) -> Author {
+        reflog_author(&self.local())
+    }
+
+    /// Commits on the current branch's first-parent line that changed
+    /// `path` (checkpoints and pending autocommits), newest first.
+    pub fn file_history(&self, path: &Path, limit: usize) -> Result<Vec<CommitInfo>> {
+        let rel = self.rela_path(path)?;
+        let repo = self.local();
+        let Some(mut id) = head_id(&repo)? else { return Ok(Vec::new()) };
+        let tags = tag_map(&repo)?;
+        let mut blob = blob_at(&repo, id, rel.as_ref())?;
+        let mut out = Vec::new();
+        while out.len() < limit {
+            let parent = repo.find_commit(id)?.parent_ids().next().map(|p| p.detach());
+            let before = match parent {
+                Some(p) => blob_at(&repo, p, rel.as_ref())?,
+                None => None,
+            };
+            if before != blob {
+                out.push(commit_info(&repo, id, tags.get(&id).cloned())?);
+            }
+            match parent {
+                Some(p) => (id, blob) = (p, before),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+
+    /// The content of `path` in `commit` (`None` if it did not exist there).
+    pub fn file_at(&self, commit: &str, path: &Path) -> Result<Option<Vec<u8>>> {
+        let rel = self.rela_path(path)?;
+        let repo = self.local();
+        let id = ObjectId::from_hex(commit.as_bytes()).map_err(other)?;
+        match blob_at(&repo, id, rel.as_ref())? {
+            Some(blob) => Ok(Some(repo.find_object(blob)?.detach().data)),
+            None => Ok(None),
+        }
+    }
+}
+
+fn blob_at(repo: &gix::Repository, commit: ObjectId, rel: &gix::bstr::BStr) -> Result<Option<ObjectId>> {
+    let tree = repo.find_commit(commit)?.tree()?;
+    let entry = tree.lookup_entry(rel.split(|b| *b == b'/'))?;
+    Ok(entry.filter(|e| e.mode().is_blob_or_symlink()).map(|e| e.object_id()))
+}
+
+#[cfg(test)]
+mod file_history_tests {
+    use super::*;
+
+    #[test]
+    fn history_and_content_of_one_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = Repo::init(root, "main").unwrap();
+        let me = Author { name: "T".into(), email: "t@x".into() };
+        std::fs::write(root.join("a.md"), "one\n").unwrap();
+        std::fs::write(root.join("b.md"), "b\n").unwrap();
+        let first = repo.autocommit_all(&me).unwrap();
+        std::fs::write(root.join("b.md"), "b2\n").unwrap();
+        repo.autocommit_all(&me).unwrap();
+        std::fs::write(root.join("a.md"), "two\n").unwrap();
+        let third = repo.autocommit_all(&me).unwrap();
+
+        let hist = repo.file_history(&root.join("a.md"), 10).unwrap();
+        assert_eq!(hist.iter().map(|c| c.id.clone()).collect::<Vec<_>>(), vec![third.id.clone(), first.id.clone()]);
+        assert_eq!(repo.file_at(&first.id, &root.join("a.md")).unwrap().unwrap(), b"one\n");
+        assert_eq!(repo.file_at(&third.id, Path::new("a.md")).unwrap().unwrap(), b"two\n");
+        assert_eq!(repo.file_at(&first.id, Path::new("nope.md")).unwrap(), None);
+    }
+}

@@ -1,6 +1,8 @@
 //! Right-click detection for the document area. `mouse_area` reports a
 //! right press but not where it happened, and the context menu opens at the
 //! pointer, so this wrapper publishes the window position instead.
+//! While a modal layer is open it also keeps keyboard and IME input away
+//! from the document, so Enter or Esc in a dialog never edits the text.
 
 use iced::advanced::layout;
 use iced::advanced::mouse;
@@ -13,13 +15,22 @@ use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
 pub struct ContextArea<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
     on_right: Box<dyn Fn(Point) -> Message + 'a>,
+    keys_blocked: bool,
 }
 
 pub fn context_area<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
     on_right: impl Fn(Point) -> Message + 'a,
 ) -> ContextArea<'a, Message, Theme, Renderer> {
-    ContextArea { content: content.into(), on_right: Box::new(on_right) }
+    ContextArea { content: content.into(), on_right: Box::new(on_right), keys_blocked: false }
+}
+
+impl<Message, Theme, Renderer> ContextArea<'_, Message, Theme, Renderer> {
+    /// Drop keyboard and input-method events (a modal layer is open).
+    pub fn keys_blocked(mut self, blocked: bool) -> Self {
+        self.keys_blocked = blocked;
+        self
+    }
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for ContextArea<'_, Message, Theme, Renderer>
@@ -63,6 +74,9 @@ where
             && let Some(p) = cursor.position_over(layout.bounds())
         {
             shell.publish((self.on_right)(p));
+        }
+        if self.keys_blocked && matches!(event, Event::Keyboard(_) | Event::InputMethod(_)) {
+            return;
         }
         self.content.as_widget_mut().update(
             &mut tree.children[0],

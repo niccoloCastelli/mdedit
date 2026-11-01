@@ -30,6 +30,8 @@ toml.workspace = true
 directories.workspace = true
 notify.workspace = true
 image.workspace = true
+jiff.workspace = true
+similar.workspace = true
 
 [build-dependencies]
 winresource.workspace = true
