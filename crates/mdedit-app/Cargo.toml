@@ -25,3 +25,10 @@ mdedit-view.workspace = true
 iced.workspace = true
 rfd.workspace = true
 tokio.workspace = true
+serde.workspace = true
+toml.workspace = true
+directories.workspace = true
+notify.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
