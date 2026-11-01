@@ -376,6 +376,11 @@ impl App {
                     replies: Vec::new(),
                 };
                 let id = comment.id.clone();
+                // Collapse the selection so the format toolbar does not pop
+                // back up over the text just commented.
+                if !tab.selection().is_empty() {
+                    tab.set_selection(Selection::cursor(range.end));
+                }
                 tab.comments.sidecar.comments.push(comment);
                 tab.comments.live.push(Resolution::Attached(range));
                 tab.comments.changed();
