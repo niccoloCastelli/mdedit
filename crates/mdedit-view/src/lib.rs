@@ -25,6 +25,9 @@
 //!   offset when no anchor is at hand.
 //! - Copy, cut and paste use the clipboard directly; undo, redo and other
 //!   shortcuts are not captured, so the app's keymap sees them.
+//! - The view takes keyboard focus on a click, or from
+//!   `iced::widget::operation::focus(id)` when built with
+//!   `View::new(..).id(id)` (e.g. when switching to View mode).
 //! - Images resolve relative to `Document::path` and decode on worker
 //!   threads into a shared LRU ([`images::cache`], 64 MB by default).
 
