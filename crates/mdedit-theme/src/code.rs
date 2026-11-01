@@ -49,7 +49,7 @@ impl crate::Theme {
                 foreground: Some(color(self.color(ColorToken::SyntaxCode))),
                 background: Some(color(self.color(ColorToken::SyntaxCodeBg))),
                 caret: Some(color(self.color(ColorToken::Accent))),
-                selection: Some(color(self.color(ColorToken::AccentSoft))),
+                selection: Some(color(self.color(ColorToken::Selection))),
                 ..Default::default()
             },
             scopes,

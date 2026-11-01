@@ -807,6 +807,9 @@ impl App {
             return Task::none();
         }
         let Some(chord) = KeyChord::from_event(&key, modifiers) else { return Task::none() };
+        if std::env::var_os("MDEDIT_DEBUG_KEYS").is_some() {
+            eprintln!("key {key:?} {modifiers:?} captured={captured} -> {chord} {:?}", self.keymap.lookup(&chord));
+        }
         match self.keymap.lookup(&chord) {
             Some(id) => self.run(id),
             None => Task::none(),

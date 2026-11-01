@@ -1373,7 +1373,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                                 {
                                     for tr in t.text_ranges(laid) {
                                         for rect in t.range_rects(tr.start, tr.end) {
-                                            quad(r, rect + o, c.accent_soft, Border::default());
+                                            quad(r, rect + o, c.selection, Border::default());
                                         }
                                     }
                                 }
