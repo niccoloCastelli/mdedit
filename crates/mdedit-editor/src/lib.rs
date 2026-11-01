@@ -7,14 +7,42 @@
 //! [`Action`]s and the app applies them, so undo, anchors and the block index
 //! all see every change through `Document::apply`.
 //!
-//! Editor-widget workstream: replace the placeholder in [`editor`] with the
-//! real widget, keeping this public API (extend it as needed, but tell the
-//! app-shell workstream).
+//! # Contract with the app
+//!
+//! - [`Action::Edit`] is always followed by an [`Action::Select`] with the
+//!   caret after the edit. Apply the edit with `Document::apply`, then store
+//!   the selection in [`EditorState::selection`].
+//! - [`Action::Scroll`] carries the new scroll offset; store it in
+//!   [`EditorState::scroll_y`]. Setting `scroll_y` to anything else makes the
+//!   widget jump there (restoring a session, Split-mode sync). Not storing it
+//!   is fine too: the widget keeps its own scroll anchor.
+//! - [`Action::Copy`] asks the app to put text on the clipboard (the widget
+//!   does not write the clipboard itself); cut sends `Copy` then `Edit`.
+//!   [`Action::Paste`] asks the app to read the clipboard and send the text
+//!   back as an edit (images may go to `assets/` instead).
+//! - Shortcuts the widget does not handle (Ctrl+B, Ctrl+S, ...) are not
+//!   captured, so the app's keymap sees them.
+//! - Edits carry `EditOrigin::User` and `TxnId(0)`; the app assigns undo
+//!   grouping.
+//!
+//! Between two view rebuilds the widget emits at most one `Edit`: further
+//! key presses in the same event batch are queued and replayed after the app
+//! has applied the first one, so every edit is computed on current text.
 
-use iced::widget::{scrollable, text};
-use iced::{Element, Font, Length};
+mod cache;
+mod geometry;
+mod height_map;
+mod motion;
+pub mod stats;
+mod style;
+mod widget;
+
+use iced::Element;
 use mdedit_core::{Document, Edit, Selection};
-use mdedit_theme::{ColorToken, Theme};
+use mdedit_theme::Theme;
+
+pub use height_map::HeightMap;
+pub use widget::Editor;
 
 /// State the app keeps per open document for the Edit view.
 #[derive(Debug, Clone, Default)]
@@ -25,8 +53,11 @@ pub struct EditorState {
     /// Whole buffer in monospace (setting; default is proportional prose).
     pub monospace: bool,
     pub line_numbers: bool,
-    /// Byte ranges to highlight (search matches, comment anchors).
+    /// Byte ranges to highlight (search matches, comment anchors), sorted by
+    /// start.
     pub highlights: Vec<Highlight>,
+    /// Use the whole width instead of the 720 px measure (DESIGN_SYSTEM 3.3).
+    pub full_width: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,20 +88,13 @@ pub enum Action {
     Redo,
 }
 
-/// The Edit-mode view of `doc`. Placeholder: a scrollable, read-only text of
-/// the first 500 lines.
+/// The Edit-mode view of `doc`. Use [`Editor::new`] to set a widget id
+/// (for focusing it with `iced::widget::operation::focus`).
 pub fn editor<'a, Message: 'a>(
     doc: &'a Document,
     state: &'a EditorState,
     theme: &'a Theme,
     on_action: impl Fn(Action) -> Message + 'a,
 ) -> Element<'a, Message> {
-    let _ = (state, on_action);
-    let buf = doc.buffer();
-    let lines = buf.len_lines().unwrap_or(0).min(500);
-    let preview: String = (0..lines).map(|i| format!("{}\n", buf.line(i))).collect();
-    scrollable(text(preview).font(Font::MONOSPACE).color(theme.color(ColorToken::Text)))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    Editor::new(doc, state, theme, on_action).into()
 }

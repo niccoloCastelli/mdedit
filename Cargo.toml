@@ -55,7 +55,16 @@ notify = "8"
 notify-debouncer-full = "0.5"
 
 # Git (pure Rust); git2 only behind mdedit-git's optional `push` feature.
-gix = { version = "0.90", default-features = false }
+gix = { version = "0.90", default-features = false, features = [
+    "sha1",
+    "max-performance",
+    "status",
+    "revision",
+    "worktree-mutation",
+    "credentials",
+    "blocking-network-client",
+    "blocking-http-transport-reqwest-rust-tls",
+] }
 git2 = { version = "0.21", default-features = false }
 keyring = "4"
 

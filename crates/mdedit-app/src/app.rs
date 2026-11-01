@@ -1,0 +1,1322 @@
+//! Application state and update loop.
+//!
+//! The shell owns the open tabs, panels, settings and keymap. Widgets
+//! (editor, view) report actions; text changes go through
+//! `Document::apply` (via [`Tab::apply`]) so the edit log sees everything.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use iced::keyboard::{Key, Modifiers, key::Named};
+use iced::{Event, Point, Subscription, Task, event, mouse, window};
+use mdedit_core::command as core_cmd;
+use mdedit_core::document::SavePoint;
+use mdedit_core::parse::OutlineEntry;
+use mdedit_core::search::{SearchQuery, find_all};
+use mdedit_core::{Document, Edit, EditOrigin, Selection};
+use mdedit_theme::Theme;
+
+use crate::command::{self, AppCommand, Command};
+use crate::keymap::{self, KeyChord, Keymap, Overrides};
+use crate::palette::{self, Palette, Scope};
+use crate::session::{Session, TabSession};
+use crate::settings::{AppearanceMode, Mode, Paths, Settings};
+use crate::tab::{DiskStamp, External, Handoff, Tab, TabId};
+use crate::watch;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarTab {
+    Files,
+    Outline,
+    Search,
+    Git,
+}
+
+impl SidebarTab {
+    pub const ALL: [SidebarTab; 4] = [SidebarTab::Files, SidebarTab::Outline, SidebarTab::Search, SidebarTab::Git];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SidebarTab::Files => "Files",
+            SidebarTab::Outline => "Outline",
+            SidebarTab::Search => "Search",
+            SidebarTab::Git => "Git",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            SidebarTab::Files => "files",
+            SidebarTab::Outline => "outline",
+            SidebarTab::Search => "search",
+            SidebarTab::Git => "git",
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        Self::ALL.into_iter().find(|t| t.key() == key).unwrap_or(SidebarTab::Outline)
+    }
+}
+
+/// A modal question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Dialog {
+    /// Closing a tab with unsaved changes.
+    UnsavedTab(TabId),
+    /// Quitting with unsaved changes.
+    UnsavedQuit(usize),
+    About,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub text: String,
+    pub error: bool,
+    pub until: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BannerAction {
+    Reload,
+    KeepMine,
+    Close,
+}
+
+/// Word count and friends for the status bar, computed off the UI thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Stats {
+    pub words: usize,
+    pub chars: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// Run a command by id (menus, palette, keymap).
+    Run(&'static str),
+    Key {
+        key: Key,
+        modifiers: Modifiers,
+        captured: bool,
+    },
+    MenuOpen(Option<usize>),
+    MenuHover(usize),
+    SelectTab(usize),
+    CloseTab(usize),
+    Editor(TabId, mdedit_editor::Action),
+    View(TabId, mdedit_view::Action),
+    OpenPicked(Vec<PathBuf>),
+    Loaded(PathBuf, Result<Handoff<Document>, String>),
+    SaveAsPicked(TabId, Option<PathBuf>),
+    Saved(TabId, PathBuf, SavePoint, Result<(), String>),
+    Paste(TabId, Option<String>),
+    SetMode(Mode),
+    Sidebar(SidebarTab),
+    SidebarDragStart,
+    SidebarDrag(Point),
+    SidebarDragEnd,
+    OutlineJump(usize),
+    SearchQuery(String),
+    SearchJump(usize, usize),
+    Palette(PaletteMsg),
+    Banner(TabId, BannerAction),
+    FileChanged(PathBuf),
+    Dialog(DialogChoice),
+    CloseRequested,
+    SystemDark(bool),
+    Stats(TabId, u64, Stats),
+    Tick,
+    SessionTick,
+}
+
+#[derive(Debug, Clone)]
+pub enum PaletteMsg {
+    Query(String),
+    Submit,
+    Pick(usize),
+    Close,
+}
+
+pub struct SidebarState {
+    pub visible: bool,
+    pub tab: SidebarTab,
+    pub width: f32,
+}
+
+pub struct App {
+    pub paths: Paths,
+    pub settings: Settings,
+    keymap_file: Overrides,
+    pub keymap: Keymap,
+    system_dark: bool,
+    themes: mdedit_theme::ThemeSet,
+    pub theme: Theme,
+    pub tabs: Vec<Tab>,
+    pub active: usize,
+    next_id: TabId,
+    next_untitled: usize,
+    pub sidebar: SidebarState,
+    pub comments_visible: bool,
+    pub menu_open: Option<usize>,
+    pub palette: Option<Palette>,
+    pub dialog: Option<Dialog>,
+    pub toasts: Vec<Toast>,
+    pub session: Session,
+    /// Session tabs still loading, in their saved order.
+    restoring: Vec<TabSession>,
+    restore_active: Option<PathBuf>,
+    dragging_sidebar: bool,
+    session_dirty: bool,
+    quitting: bool,
+    close_after_save: Vec<TabId>,
+    pub search: SearchState,
+    /// Per tab: outline and stats with the buffer version they were made at.
+    pub outline: Vec<(TabId, u64, Vec<OutlineEntry>)>,
+    pub stats: Vec<(TabId, u64, Stats)>,
+    stats_pending: Vec<TabId>,
+}
+
+#[derive(Debug, Default)]
+pub struct SearchState {
+    pub query: String,
+    pub results: Vec<(usize, usize, String)>,
+    /// (tab, version) the results belong to.
+    for_version: Option<(TabId, u64)>,
+}
+
+pub const PALETTE_INPUT: &str = "palette-input";
+pub const SEARCH_INPUT: &str = "sidebar-search";
+const MAX_SEARCH_RESULTS: usize = 500;
+
+impl App {
+    pub fn new() -> (Self, Task<Message>) {
+        let paths = Paths::detect();
+        let (settings, settings_err) = Settings::load(&paths.settings());
+        let (keymap_file, keymap_err) = load_keymap_file(&paths.keymap());
+        let keymap = Keymap::new([&settings.keymap, &keymap_file]);
+        let session = if settings.files.restore_session {
+            Session::load(&paths.session()).unwrap_or_default()
+        } else {
+            Session { recent: Session::load(&paths.session()).unwrap_or_default().recent, ..Default::default() }
+        };
+        let fresh = session.tabs.is_empty() && session.sidebar_width == 0.0;
+        let mut app = Self {
+            sidebar: SidebarState {
+                visible: if fresh { true } else { session.sidebar_visible },
+                tab: SidebarTab::from_key(&session.sidebar_tab),
+                width: if session.sidebar_width > 0.0 {
+                    session.sidebar_width.clamp(mdedit_theme::space::SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX)
+                } else {
+                    mdedit_theme::space::SIDEBAR_WIDTH
+                },
+            },
+            comments_visible: session.comments_visible,
+            paths,
+            settings,
+            keymap_file,
+            keymap,
+            system_dark: false,
+            themes: mdedit_theme::ThemeSet::builtin(),
+            theme: Theme::ember_light(),
+            tabs: Vec::new(),
+            active: 0,
+            next_id: 1,
+            next_untitled: 1,
+            menu_open: None,
+            palette: None,
+            dialog: None,
+            toasts: Vec::new(),
+            restoring: session.tabs.clone(),
+            restore_active: session.tabs.get(session.active).map(|t| t.path.clone()),
+            session,
+            dragging_sidebar: false,
+            session_dirty: false,
+            quitting: false,
+            close_after_save: Vec::new(),
+            search: SearchState::default(),
+            outline: Vec::new(),
+            stats: Vec::new(),
+            stats_pending: Vec::new(),
+        };
+        app.load_themes();
+        app.apply_theme();
+        for err in [settings_err, keymap_err].into_iter().flatten() {
+            app.toast_error(err);
+        }
+        for w in app.keymap.warnings.clone() {
+            app.toast_error(w);
+        }
+
+        let mut tasks = vec![iced::system::theme().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark))];
+        let threshold = app.settings.files.large_file_threshold();
+        let mut to_open: Vec<PathBuf> = app.restoring.iter().map(|t| t.path.clone()).collect();
+        let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+        for a in &args {
+            let p = absolute(a);
+            if !to_open.contains(&p) {
+                to_open.push(p);
+            }
+        }
+        if let Some(last) = args.last() {
+            app.restore_active = Some(absolute(last));
+        }
+        if to_open.is_empty() {
+            app.new_untitled();
+        }
+        for path in to_open {
+            tasks.push(Task::perform(crate::tab::load(path.clone(), threshold), move |r| {
+                Message::Loaded(path.clone(), r)
+            }));
+        }
+        (app, Task::batch(tasks))
+    }
+
+    pub fn title(&self) -> String {
+        match self.tabs.get(self.active) {
+            Some(tab) => format!("{}{} - mdedit", if tab.is_dirty() { "● " } else { "" }, tab.title()),
+            None => "mdedit".into(),
+        }
+    }
+
+    pub fn iced_theme(&self) -> iced::Theme {
+        crate::style::iced_theme(&self.theme)
+    }
+
+    pub fn scale_factor(&self) -> f32 {
+        self.settings.appearance.ui_scale.clamp(0.5, 3.0)
+    }
+
+    pub fn active_tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.active)
+    }
+
+    fn active_tab_mut(&mut self) -> Option<&mut Tab> {
+        self.tabs.get_mut(self.active)
+    }
+
+    fn tab_index(&self, id: TabId) -> Option<usize> {
+        self.tabs.iter().position(|t| t.id == id)
+    }
+
+    fn tab_mut(&mut self, id: TabId) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|t| t.id == id)
+    }
+
+    pub fn is_dark(&self) -> bool {
+        match self.settings.appearance.mode {
+            AppearanceMode::System => self.system_dark,
+            AppearanceMode::Light => false,
+            AppearanceMode::Dark => true,
+        }
+    }
+
+    fn apply_theme(&mut self) {
+        let a = &self.settings.appearance;
+        let wanted = mdedit_theme::ThemeSettings {
+            appearance: if self.is_dark() { mdedit_theme::Appearance::Dark } else { mdedit_theme::Appearance::Light },
+            light_theme: a.light_theme.clone(),
+            dark_theme: a.dark_theme.clone(),
+        };
+        let id = if self.is_dark() { &a.dark_theme } else { &a.light_theme };
+        if let Err(e) = self.themes.get(id) {
+            let msg = e.to_string();
+            self.toast_error(msg);
+        }
+        let mut theme = self.themes.select(&wanted, None);
+        let f = &self.settings.fonts;
+        for (setting, slot) in
+            [(&f.ui, &mut theme.fonts.ui), (&f.prose, &mut theme.fonts.prose), (&f.mono, &mut theme.fonts.mono)]
+        {
+            if !setting.is_empty() {
+                *slot = setting.clone();
+            }
+        }
+        self.theme = theme;
+    }
+
+    /// Built-in themes plus `themes/*.toml` in the config dir.
+    fn load_themes(&mut self) {
+        let mut set = mdedit_theme::ThemeSet::builtin();
+        let errors = set.load_dir(&self.paths.config_dir.join("themes"));
+        self.themes = set;
+        for e in errors {
+            self.toast_error(e.to_string());
+        }
+    }
+
+    /// Push editor settings into every tab's widget state.
+    fn apply_editor_settings(&mut self) {
+        let e = &self.settings.editor;
+        for tab in &mut self.tabs {
+            tab.editor.line_numbers = e.line_numbers;
+            tab.editor.monospace = e.monospace;
+        }
+    }
+
+    fn new_untitled(&mut self) {
+        let mut doc = Document::from_text("");
+        doc.mark_saved();
+        let mut tab = Tab::new(self.next_id, doc, self.settings.editor.default_mode, self.next_untitled);
+        tab.editor.line_numbers = self.settings.editor.line_numbers;
+        tab.editor.monospace = self.settings.editor.monospace;
+        self.next_id += 1;
+        self.next_untitled += 1;
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
+    }
+
+    pub fn toast(&mut self, text: impl Into<String>) {
+        self.push_toast(text.into(), false);
+    }
+
+    pub fn toast_error(&mut self, text: impl Into<String>) {
+        self.push_toast(text.into(), true);
+    }
+
+    fn push_toast(&mut self, text: String, error: bool) {
+        self.toasts.push(Toast { text, error, until: Instant::now() + Duration::from_secs(if error { 8 } else { 4 }) });
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        let mut subs = vec![
+            event::listen_with(|event, status, _| match event {
+                Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                    Some(Message::Key { key, modifiers, captured: status == event::Status::Captured })
+                }
+                _ => None,
+            }),
+            window::close_requests().map(|_| Message::CloseRequested),
+            iced::system::theme_changes().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
+            watch::changes(self.watched_paths()).map(Message::FileChanged),
+        ];
+        if !self.toasts.is_empty() {
+            subs.push(iced::time::every(Duration::from_millis(500)).map(|_| Message::Tick));
+        }
+        if self.session_dirty {
+            subs.push(iced::time::every(Duration::from_secs(2)).map(|_| Message::SessionTick));
+        }
+        if self.dragging_sidebar {
+            subs.push(event::listen_with(|event, _, _| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => Some(Message::SidebarDrag(position)),
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::SidebarDragEnd),
+                _ => None,
+            }));
+        }
+        Subscription::batch(subs)
+    }
+
+    fn watched_paths(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = self.tabs.iter().filter_map(|t| t.doc.path.clone()).collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        let derived = self.refresh_derived();
+        // Cursor moves and layout changes reach session.toml within a few
+        // seconds, so a crash or kill loses little.
+        if !self.session_dirty && self.restoring.is_empty() && !self.quitting {
+            let snap = self.session_snapshot();
+            self.session_dirty = snap != self.session;
+        }
+        Task::batch([task, derived])
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Run(id) => {
+                self.menu_open = None;
+                return self.run(id);
+            }
+            Message::Key { key, modifiers, captured } => return self.on_key(key, modifiers, captured),
+            Message::MenuOpen(m) => self.menu_open = if self.menu_open == m { None } else { m },
+            Message::MenuHover(i) => {
+                if self.menu_open.is_some() {
+                    self.menu_open = Some(i);
+                }
+            }
+            Message::SelectTab(i) => {
+                if i < self.tabs.len() {
+                    self.active = i;
+                }
+            }
+            Message::CloseTab(i) => {
+                if let Some(id) = self.tabs.get(i).map(|t| t.id) {
+                    return self.request_close(id);
+                }
+            }
+            Message::Editor(id, action) => return self.on_editor(id, action),
+            Message::View(id, action) => return self.on_view(id, action),
+            Message::OpenPicked(paths) => {
+                let threshold = self.settings.files.large_file_threshold();
+                let mut tasks = Vec::new();
+                for path in paths {
+                    let path = absolute(&path);
+                    if let Some(i) = self.tabs.iter().position(|t| t.doc.path.as_deref() == Some(&path)) {
+                        self.active = i;
+                        continue;
+                    }
+                    if let Some(dir) = path.parent() {
+                        self.session.last_dir = Some(dir.to_path_buf());
+                    }
+                    self.restore_active = Some(path.clone());
+                    tasks.push(Task::perform(crate::tab::load(path.clone(), threshold), move |r| {
+                        Message::Loaded(path.clone(), r)
+                    }));
+                }
+                return Task::batch(tasks);
+            }
+            Message::Loaded(path, result) => self.on_loaded(path, result),
+            Message::SaveAsPicked(id, Some(path)) => {
+                if let Some(dir) = path.parent() {
+                    self.session.last_dir = Some(dir.to_path_buf());
+                }
+                return self.start_save(id, Some(path));
+            }
+            Message::SaveAsPicked(_, None) => {
+                // A cancelled save-as also cancels the quit or close waiting on it.
+                self.quitting = false;
+                self.close_after_save.clear();
+            }
+            Message::Saved(id, path, point, result) => return self.on_saved(id, path, point, result),
+            Message::Paste(id, Some(text)) => {
+                if let Some(tab) = self.tab_mut(id) {
+                    let range = tab.selection().range();
+                    let txn = tab.doc.next_txn();
+                    let end = range.start + text.len();
+                    tab.apply(&Edit { range, text, origin: EditOrigin::User, txn });
+                    tab.set_selection(Selection::cursor(end));
+                }
+            }
+            Message::Paste(_, None) => {}
+            Message::SetMode(mode) => self.set_mode(mode),
+            Message::Sidebar(t) => {
+                if self.sidebar.visible && self.sidebar.tab == t {
+                    self.sidebar.visible = false;
+                } else {
+                    self.sidebar.visible = true;
+                    self.sidebar.tab = t;
+                }
+                if self.sidebar.visible && t == SidebarTab::Search {
+                    return iced::widget::operation::focus(SEARCH_INPUT);
+                }
+            }
+            Message::SidebarDragStart => self.dragging_sidebar = true,
+            Message::SidebarDrag(p) => {
+                self.sidebar.width = p.x.clamp(mdedit_theme::space::SIDEBAR_MIN, mdedit_theme::space::SIDEBAR_MAX);
+            }
+            Message::SidebarDragEnd => {
+                self.dragging_sidebar = false;
+                self.save_session();
+            }
+            Message::OutlineJump(byte) => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.set_selection(Selection::cursor(byte));
+                }
+            }
+            Message::SearchQuery(q) => {
+                self.search.query = q;
+                self.search.for_version = None;
+            }
+            Message::SearchJump(start, end) => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.set_selection(Selection { anchor: start, head: end });
+                }
+            }
+            Message::Palette(msg) => return self.on_palette(msg),
+            Message::Banner(id, action) => self.on_banner(id, action),
+            Message::FileChanged(path) => self.on_file_changed(&path),
+            Message::Dialog(choice) => return self.on_dialog(choice),
+            Message::CloseRequested => return self.run_app(AppCommand::Quit),
+            Message::SystemDark(dark) => {
+                self.system_dark = dark;
+                self.apply_theme();
+            }
+            Message::Stats(id, version, stats) => {
+                self.stats_pending.retain(|t| *t != id);
+                self.stats.retain(|(t, _, _)| *t != id);
+                self.stats.push((id, version, stats));
+            }
+            Message::SessionTick => {
+                self.session_dirty = false;
+                self.save_session();
+            }
+            Message::Tick => {
+                let now = Instant::now();
+                self.toasts.retain(|t| t.until > now);
+            }
+        }
+        Task::none()
+    }
+
+    /// Keep cheap derived data (outline, search results, stats) in step with
+    /// the active buffer. Expensive work (stats) runs on a worker.
+    fn refresh_derived(&mut self) -> Task<Message> {
+        self.outline.retain(|(id, _, _)| self.tabs.iter().any(|t| t.id == *id));
+        self.stats.retain(|(id, _, _)| self.tabs.iter().any(|t| t.id == *id));
+        let Some(tab) = self.tabs.get(self.active) else { return Task::none() };
+        let (id, version) = (tab.id, tab.doc.buffer().version());
+
+        if self.sidebar.visible && self.sidebar.tab == SidebarTab::Outline {
+            let fresh = self.outline.iter().any(|(t, v, _)| *t == id && *v == version);
+            if !fresh {
+                let entries =
+                    tab.doc.blocks().map(|b| mdedit_core::parse::outline(b, tab.doc.buffer())).unwrap_or_default();
+                self.outline.retain(|(t, _, _)| *t != id);
+                self.outline.push((id, version, entries));
+            }
+        }
+
+        if self.sidebar.visible
+            && self.sidebar.tab == SidebarTab::Search
+            && self.search.for_version != Some((id, version))
+        {
+            let query = SearchQuery { pattern: self.search.query.clone(), ..Default::default() };
+            self.search.results = match find_all(tab.doc.buffer(), &query) {
+                Ok(matches) => matches
+                    .into_iter()
+                    .take(MAX_SEARCH_RESULTS)
+                    .map(|m| {
+                        let buf = tab.doc.buffer();
+                        let line = buf.byte_to_line(m.range.start);
+                        let text = buf.line(line).trim().chars().take(80).collect::<String>();
+                        (m.range.start, m.range.end, format!("{}: {text}", line + 1))
+                    })
+                    .collect(),
+                Err(e) => vec![(0, 0, e.to_string())],
+            };
+            self.search.for_version = Some((id, version));
+        }
+
+        let stale = !self.stats.iter().any(|(t, v, _)| *t == id && *v == version);
+        if stale && !self.stats_pending.contains(&id) {
+            self.stats_pending.push(id);
+            let snapshot = tab.doc.buffer().snapshot();
+            return Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let mut stats = Stats::default();
+                        for chunk in snapshot.chunks(0..snapshot.len_bytes()) {
+                            let s = String::from_utf8_lossy(chunk);
+                            stats.chars += s.chars().filter(|c| *c != '\r' && *c != '\n').count();
+                        }
+                        stats.words = snapshot.text().split_whitespace().count();
+                        stats
+                    })
+                    .await
+                    .unwrap_or_default()
+                },
+                move |stats| Message::Stats(id, version, stats),
+            );
+        }
+        Task::none()
+    }
+
+    fn on_key(&mut self, key: Key, modifiers: Modifiers, captured: bool) -> Task<Message> {
+        if key == Key::Named(Named::Escape) {
+            if self.palette.take().is_some() || self.menu_open.take().is_some() {
+                return Task::none();
+            }
+            if self.dialog.is_some() {
+                return self.on_dialog(DialogChoice::Cancel);
+            }
+            return Task::none();
+        }
+        if self.palette.is_some() {
+            let delta = match key {
+                Key::Named(Named::ArrowDown) => 1,
+                Key::Named(Named::ArrowUp) => -1,
+                _ => 0,
+            };
+            if delta != 0 {
+                let len = self.palette_items().len().min(palette::MAX_ROWS);
+                if let Some(p) = &mut self.palette {
+                    p.move_selection(delta, len);
+                }
+                return Task::none();
+            }
+        }
+        if self.dialog.is_some() {
+            if key == Key::Named(Named::Enter) && !captured {
+                return self.on_dialog(DialogChoice::Save);
+            }
+            return Task::none();
+        }
+        // Plain typing belongs to whatever widget took it.
+        if captured && !(modifiers.command() || modifiers.alt()) {
+            return Task::none();
+        }
+        let Some(chord) = KeyChord::from_event(&key, modifiers) else { return Task::none() };
+        match self.keymap.lookup(&chord) {
+            Some(id) => self.run(id),
+            None => Task::none(),
+        }
+    }
+
+    pub fn run(&mut self, id: &str) -> Task<Message> {
+        let Some(entry) = command::find(id) else { return Task::none() };
+        match &entry.command {
+            Command::App(cmd) => self.run_app(*cmd),
+            Command::Doc(cmd) => {
+                let Some(tab) = self.active_tab_mut() else { return Task::none() };
+                if tab.doc.format.read_only {
+                    return Task::none();
+                }
+                let result = core_cmd::run(&tab.doc, tab.selection(), cmd);
+                if !result.edits.is_empty() {
+                    let txn = tab.doc.next_txn();
+                    for edit in result.edits {
+                        tab.apply(&Edit { txn, origin: EditOrigin::Command, ..edit });
+                    }
+                }
+                tab.set_selection(result.selection);
+                Task::none()
+            }
+        }
+    }
+
+    fn run_app(&mut self, cmd: AppCommand) -> Task<Message> {
+        use AppCommand::*;
+        match cmd {
+            NewFile => self.new_untitled(),
+            Open => {
+                let dir = self.session.last_dir.clone();
+                return Task::perform(
+                    async move {
+                        let mut d = rfd::AsyncFileDialog::new()
+                            .add_filter("Markdown", &["md", "markdown", "mdown", "txt"])
+                            .add_filter("All files", &["*"]);
+                        if let Some(dir) = dir {
+                            d = d.set_directory(dir);
+                        }
+                        d.pick_files()
+                            .await
+                            .map(|v| v.iter().map(|h| h.path().to_path_buf()).collect())
+                            .unwrap_or_default()
+                    },
+                    Message::OpenPicked,
+                );
+            }
+            Save => {
+                if let Some(tab) = self.active_tab() {
+                    let id = tab.id;
+                    return if tab.doc.path.is_some() { self.start_save(id, None) } else { self.save_as(id) };
+                }
+            }
+            SaveAs => {
+                if let Some(id) = self.active_tab().map(|t| t.id) {
+                    return self.save_as(id);
+                }
+            }
+            SaveAll => {
+                let ids: Vec<TabId> =
+                    self.tabs.iter().filter(|t| t.is_dirty() && t.doc.path.is_some()).map(|t| t.id).collect();
+                return Task::batch(ids.into_iter().map(|id| self.start_save(id, None)));
+            }
+            CloseTab => {
+                if let Some(id) = self.active_tab().map(|t| t.id) {
+                    return self.request_close(id);
+                }
+            }
+            Quit => {
+                let dirty = self.tabs.iter().filter(|t| t.is_dirty()).count();
+                if dirty == 0 {
+                    return self.exit();
+                }
+                self.dialog = Some(Dialog::UnsavedQuit(dirty));
+            }
+            Undo | Redo => {
+                if let Some(tab) = self.active_tab_mut() {
+                    let sel = if cmd == Undo { tab.doc.undo() } else { tab.doc.redo() };
+                    if let Some(sel) = sel {
+                        tab.set_selection(sel);
+                    }
+                }
+            }
+            Find | FindInFiles | ShowSearch => {
+                self.sidebar.visible = true;
+                self.sidebar.tab = SidebarTab::Search;
+                if let Some(tab) = self.active_tab() {
+                    let sel = tab.selection();
+                    if !sel.is_empty() && sel.range().len() < 200 {
+                        self.search.query = tab.doc.buffer().slice(sel.range()).into_owned();
+                        self.search.for_version = None;
+                    }
+                }
+                return Task::batch([
+                    iced::widget::operation::focus(SEARCH_INPUT),
+                    iced::widget::operation::select_all(SEARCH_INPUT),
+                ]);
+            }
+            ModeEdit => self.set_mode(Mode::Edit),
+            ModeSplit => self.set_mode(Mode::Split),
+            ModeView => self.set_mode(Mode::View),
+            CycleMode => {
+                if let Some(m) = self.active_tab().map(|t| t.mode.next()) {
+                    let m = if self.active_tab().is_some_and(|t| t.doc.is_large()) { Mode::Edit } else { m };
+                    self.set_mode(m);
+                }
+            }
+            ToggleSidebar => self.sidebar.visible = !self.sidebar.visible,
+            ToggleComments => self.comments_visible = !self.comments_visible,
+            ShowFiles => return self.show_sidebar(SidebarTab::Files),
+            ShowOutline => return self.show_sidebar(SidebarTab::Outline),
+            ShowGit => return self.show_sidebar(SidebarTab::Git),
+            Palette | QuickOpen => {
+                let scope = if cmd == Palette { Scope::Commands } else { Scope::Files };
+                self.palette = Some(palette::Palette::new(scope));
+                self.menu_open = None;
+                return iced::widget::operation::focus(PALETTE_INPUT);
+            }
+            NextTab | PrevTab => {
+                let n = self.tabs.len();
+                if n > 0 {
+                    self.active = if cmd == NextTab { (self.active + 1) % n } else { (self.active + n - 1) % n };
+                }
+            }
+            ZoomIn | ZoomOut | ZoomReset => {
+                let z = &mut self.settings.appearance.zoom;
+                *z = match cmd {
+                    ZoomIn => (*z + 0.1).min(3.0),
+                    ZoomOut => (*z - 0.1).max(0.5),
+                    _ => 1.0,
+                };
+                *z = (*z * 10.0).round() / 10.0;
+                self.store_settings();
+            }
+            ToggleFullWidth => {
+                self.settings.editor.full_width = !self.settings.editor.full_width;
+                self.store_settings();
+            }
+            ToggleLineNumbers => {
+                self.settings.editor.line_numbers = !self.settings.editor.line_numbers;
+                self.apply_editor_settings();
+                self.store_settings();
+            }
+            AppearanceSystem | AppearanceLight | AppearanceDark => {
+                self.settings.appearance.mode = match cmd {
+                    AppearanceLight => AppearanceMode::Light,
+                    AppearanceDark => AppearanceMode::Dark,
+                    _ => AppearanceMode::System,
+                };
+                self.apply_theme();
+                self.store_settings();
+            }
+            OpenSettings => return self.open_config_file(self.paths.settings(), crate::settings::SETTINGS_TEMPLATE),
+            OpenKeymap => return self.open_config_file(self.paths.keymap(), crate::settings::KEYMAP_TEMPLATE),
+            About => self.dialog = Some(Dialog::About),
+        }
+        Task::none()
+    }
+
+    fn show_sidebar(&mut self, t: SidebarTab) -> Task<Message> {
+        self.sidebar.visible = true;
+        self.sidebar.tab = t;
+        Task::none()
+    }
+
+    fn set_mode(&mut self, mode: Mode) {
+        if let Some(tab) = self.active_tab_mut() {
+            if tab.doc.is_large() && mode != Mode::Edit {
+                self.toast("Large files open in Edit mode only.");
+                return;
+            }
+            tab.set_mode(mode);
+        }
+    }
+
+    fn store_settings(&mut self) {
+        if let Err(e) = self.settings.store_ui_change(&self.paths.settings()) {
+            self.toast_error(format!("Could not save settings: {e}"));
+        }
+    }
+
+    fn reload_config(&mut self) {
+        let (settings, err) = Settings::load(&self.paths.settings());
+        let (keymap_file, kerr) = load_keymap_file(&self.paths.keymap());
+        if let Some(e) = err.or(kerr) {
+            self.toast_error(e);
+            return;
+        }
+        self.settings = settings;
+        self.keymap_file = keymap_file;
+        self.keymap = Keymap::new([&self.settings.keymap, &self.keymap_file]);
+        for w in self.keymap.warnings.clone() {
+            self.toast_error(w);
+        }
+        self.load_themes();
+        self.apply_theme();
+        self.apply_editor_settings();
+        self.toast("Settings applied.");
+    }
+
+    fn open_config_file(&mut self, path: PathBuf, template: &str) -> Task<Message> {
+        if !path.exists()
+            && let Err(e) = crate::settings::write_atomic(&path, template.as_bytes())
+        {
+            self.toast_error(format!("Could not create {}: {e}", path.display()));
+            return Task::none();
+        }
+        self.handle(Message::OpenPicked(vec![path]))
+    }
+
+    fn on_loaded(&mut self, path: PathBuf, result: Result<Handoff<Document>, String>) {
+        let restored = self.restoring.iter().position(|t| t.path == path).map(|i| self.restoring.remove(i));
+        let doc = match result.map(|h| h.take()) {
+            Ok(Some(doc)) => doc,
+            Ok(None) => return,
+            Err(e) => {
+                if restored.is_none() {
+                    self.toast_error(format!("Could not open {}: {e}", path.display()));
+                }
+                self.ensure_a_tab();
+                return;
+            }
+        };
+        if self.tabs.iter().any(|t| t.doc.path.as_deref() == Some(&path)) {
+            return;
+        }
+        let mode = restored.as_ref().map_or(self.settings.editor.default_mode, |t| t.mode);
+        let mut tab = Tab::new(self.next_id, doc, mode, 0);
+        self.next_id += 1;
+        tab.editor.line_numbers = self.settings.editor.line_numbers;
+        tab.editor.monospace = self.settings.editor.monospace;
+        if tab.doc.format.read_only {
+            self.toast("Not valid UTF-8: opened read-only.");
+        }
+        if let Some(t) = &restored {
+            let len = tab.doc.buffer().len_bytes();
+            let sel = Selection {
+                anchor: clamp_char(&tab.doc, t.anchor.min(len)),
+                head: clamp_char(&tab.doc, t.head.min(len)),
+            };
+            tab.set_selection(sel);
+            tab.editor.scroll_y = t.scroll_y;
+            tab.view.scroll_y = t.scroll_y;
+        }
+        self.session.push_recent(&path);
+
+        // Replace a pristine untitled tab instead of piling up empties.
+        if let Some(i) =
+            self.tabs.iter().position(|t| t.doc.path.is_none() && !t.is_dirty() && t.doc.buffer().len_bytes() == 0)
+        {
+            self.tabs.remove(i);
+            if self.active >= i && self.active > 0 {
+                self.active -= 1;
+            }
+        }
+        // Restored tabs keep their saved order; new ones go at the end.
+        let rank = |p: &Path, s: &Session| s.tabs.iter().position(|t| t.path == p);
+        let pos = match rank(&path, &self.session) {
+            Some(r) => self
+                .tabs
+                .iter()
+                .position(|t| t.doc.path.as_deref().and_then(|p| rank(p, &self.session)).is_none_or(|o| o > r))
+                .unwrap_or(self.tabs.len()),
+            None => self.tabs.len(),
+        };
+        self.tabs.insert(pos, tab);
+        if self.active >= pos && self.tabs.len() > 1 && self.restore_active.as_deref() != Some(&path) {
+            self.active = (self.active + 1).min(self.tabs.len() - 1);
+        }
+        if self.restore_active.as_deref() == Some(&path) || self.tabs.len() == 1 {
+            self.active = pos;
+        }
+        if self.restoring.is_empty() {
+            self.save_session();
+        }
+    }
+
+    fn ensure_a_tab(&mut self) {
+        if self.tabs.is_empty() && self.restoring.is_empty() {
+            self.new_untitled();
+        }
+    }
+
+    fn save_as(&mut self, id: TabId) -> Task<Message> {
+        let Some(tab) = self.tabs.iter().find(|t| t.id == id) else { return Task::none() };
+        let name = match &tab.doc.path {
+            Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            None => format!("{}.md", tab.title()),
+        };
+        let dir =
+            tab.doc.path.as_deref().and_then(Path::parent).map(Path::to_path_buf).or(self.session.last_dir.clone());
+        Task::perform(
+            async move {
+                let mut d = rfd::AsyncFileDialog::new().set_file_name(name).add_filter("Markdown", &["md", "markdown"]);
+                if let Some(dir) = dir {
+                    d = d.set_directory(dir);
+                }
+                d.save_file().await.map(|h| h.path().to_path_buf())
+            },
+            move |p| Message::SaveAsPicked(id, p),
+        )
+    }
+
+    fn start_save(&mut self, id: TabId, to: Option<PathBuf>) -> Task<Message> {
+        let Some(tab) = self.tab_mut(id) else { return Task::none() };
+        match tab.begin_save(to.as_deref()) {
+            Ok(job) => {
+                let (path, point) = (job.path.clone(), job.point);
+                Task::perform(
+                    async move { tokio::task::spawn_blocking(move || job.run()).await.map_err(|e| e.to_string())? },
+                    move |r| Message::Saved(id, path.clone(), point, r),
+                )
+            }
+            Err(e) => {
+                self.toast_error(format!("Could not save: {e}"));
+                self.quitting = false;
+                Task::none()
+            }
+        }
+    }
+
+    fn on_saved(&mut self, id: TabId, path: PathBuf, point: SavePoint, result: Result<(), String>) -> Task<Message> {
+        let Some(tab) = self.tab_mut(id) else { return Task::none() };
+        match result {
+            Ok(()) => {
+                let was = tab.doc.path.clone();
+                tab.finish_save(path.clone(), point);
+                if was.as_deref() != Some(&path) {
+                    self.session.push_recent(&path);
+                    self.save_session();
+                }
+                if path == self.paths.settings() || path == self.paths.keymap() {
+                    self.reload_config();
+                }
+            }
+            Err(e) => {
+                tab.saving = false;
+                self.toast_error(format!("Could not save {}: {e}", path.display()));
+                self.quitting = false;
+                self.close_after_save.retain(|t| *t != id);
+                return Task::none();
+            }
+        }
+        if let Some(i) = self.close_after_save.iter().position(|t| *t == id) {
+            self.close_after_save.remove(i);
+            if let Some(idx) = self.tab_index(id) {
+                self.close_tab_now(idx);
+            }
+        }
+        if self.quitting {
+            return self.continue_quit();
+        }
+        Task::none()
+    }
+
+    fn request_close(&mut self, id: TabId) -> Task<Message> {
+        let Some(idx) = self.tab_index(id) else { return Task::none() };
+        if self.tabs[idx].is_dirty() {
+            self.active = idx;
+            self.dialog = Some(Dialog::UnsavedTab(id));
+        } else {
+            self.close_tab_now(idx);
+        }
+        Task::none()
+    }
+
+    fn close_tab_now(&mut self, idx: usize) {
+        self.tabs.remove(idx);
+        if self.active > idx || self.active >= self.tabs.len() {
+            self.active = self.active.saturating_sub(1);
+        }
+        self.ensure_a_tab();
+        self.save_session();
+    }
+
+    fn on_dialog(&mut self, choice: DialogChoice) -> Task<Message> {
+        let Some(dialog) = self.dialog.take() else { return Task::none() };
+        match (dialog, choice) {
+            (Dialog::UnsavedTab(id), DialogChoice::Save) => {
+                self.close_after_save.push(id);
+                let has_path = self.tabs.iter().any(|t| t.id == id && t.doc.path.is_some());
+                return if has_path { self.start_save(id, None) } else { self.save_as(id) };
+            }
+            (Dialog::UnsavedTab(id), DialogChoice::Discard) => {
+                if let Some(idx) = self.tab_index(id) {
+                    self.close_tab_now(idx);
+                }
+            }
+            (Dialog::UnsavedQuit(_), DialogChoice::Save) => {
+                self.quitting = true;
+                return self.continue_quit();
+            }
+            (Dialog::UnsavedQuit(_), DialogChoice::Discard) => return self.exit(),
+            _ => {}
+        }
+        Task::none()
+    }
+
+    /// Save everything dirty, one save-as dialog at a time for untitled
+    /// buffers, then exit.
+    fn continue_quit(&mut self) -> Task<Message> {
+        if self.tabs.iter().any(|t| t.saving) {
+            return Task::none();
+        }
+        let with_path: Vec<TabId> =
+            self.tabs.iter().filter(|t| t.is_dirty() && t.doc.path.is_some()).map(|t| t.id).collect();
+        if !with_path.is_empty() {
+            return Task::batch(with_path.into_iter().map(|id| self.start_save(id, None)));
+        }
+        if let Some(idx) = self.tabs.iter().position(|t| t.is_dirty()) {
+            self.active = idx;
+            let id = self.tabs[idx].id;
+            return self.save_as(id);
+        }
+        self.exit()
+    }
+
+    fn exit(&mut self) -> Task<Message> {
+        self.save_session();
+        iced::exit()
+    }
+
+    pub fn session_snapshot(&self) -> Session {
+        let mut s = self.session.clone();
+        s.tabs = self
+            .tabs
+            .iter()
+            .filter_map(|t| {
+                let sel = t.selection();
+                Some(TabSession {
+                    path: t.doc.path.clone()?,
+                    mode: t.mode,
+                    anchor: sel.anchor,
+                    head: sel.head,
+                    scroll_y: if t.mode == Mode::View { t.view.scroll_y } else { t.editor.scroll_y },
+                })
+            })
+            .collect();
+        // Session tabs that are still loading must not be forgotten.
+        s.tabs.extend(self.restoring.iter().cloned());
+        s.active = self
+            .active_tab()
+            .and_then(|t| t.doc.path.as_ref())
+            .and_then(|p| s.tabs.iter().position(|t| &t.path == p))
+            .unwrap_or(0);
+        s.sidebar_visible = self.sidebar.visible;
+        s.sidebar_tab = self.sidebar.tab.key().into();
+        s.sidebar_width = self.sidebar.width;
+        s.comments_visible = self.comments_visible;
+        s
+    }
+
+    fn save_session(&mut self) {
+        self.session_dirty = false;
+        let s = self.session_snapshot();
+        self.session = s;
+        if let Err(e) = self.session.save(&self.paths.session()) {
+            eprintln!("mdedit: could not save session: {e}");
+        }
+    }
+
+    fn on_editor(&mut self, id: TabId, action: mdedit_editor::Action) -> Task<Message> {
+        use mdedit_editor::Action;
+        let Some(tab) = self.tab_mut(id) else { return Task::none() };
+        match action {
+            Action::Edit(edit) => {
+                if !tab.doc.format.read_only {
+                    tab.apply(&edit);
+                }
+            }
+            Action::Select(sel) => tab.set_selection(sel),
+            Action::Scroll(y) => tab.editor.scroll_y = y,
+            Action::Copy(text) => return iced::clipboard::write(text),
+            Action::Paste => {
+                if tab.doc.format.read_only {
+                    return Task::none();
+                }
+                return iced::clipboard::read().map(move |t| Message::Paste(id, t));
+            }
+            Action::Undo => return self.run_app(AppCommand::Undo),
+            Action::Redo => return self.run_app(AppCommand::Redo),
+        }
+        Task::none()
+    }
+
+    fn on_view(&mut self, id: TabId, action: mdedit_view::Action) -> Task<Message> {
+        use mdedit_view::Action;
+        let Some(tab) = self.tab_mut(id) else { return Task::none() };
+        match action {
+            Action::Edit(edit) => {
+                if !tab.doc.format.read_only && tab.mode == Mode::View {
+                    tab.apply(&edit);
+                }
+            }
+            Action::Select(sel) => {
+                if tab.mode == Mode::View {
+                    tab.set_selection(sel);
+                }
+            }
+            Action::Scroll(y) => {
+                if tab.mode == Mode::View {
+                    tab.view.scroll_y = y;
+                } else {
+                    tab.preview.scroll_y = y;
+                }
+            }
+            Action::OpenLink(url) => self.toast(format!("Link: {url}")),
+        }
+        Task::none()
+    }
+
+    pub fn palette_items(&self) -> Vec<palette::Item> {
+        let Some(p) = &self.palette else { return Vec::new() };
+        let items = match p.scope {
+            Scope::Commands => command::all()
+                .iter()
+                .map(|c| palette::Item::Command {
+                    id: c.id,
+                    title: c.title,
+                    shortcut: self.keymap.shortcut_for(c.id).map(|k| k.to_string()),
+                })
+                .collect(),
+            Scope::Files => {
+                let mut v: Vec<palette::Item> = self
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| palette::Item::Tab {
+                        index: i,
+                        title: t.title(),
+                        detail: t
+                            .doc
+                            .path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "unsaved".into()),
+                    })
+                    .collect();
+                for path in &self.session.recent {
+                    if self.tabs.iter().any(|t| t.doc.path.as_ref() == Some(path)) {
+                        continue;
+                    }
+                    v.push(palette::Item::Recent {
+                        path: path.clone(),
+                        title: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                        detail: path.parent().map(|p| p.display().to_string()).unwrap_or_default(),
+                    });
+                }
+                v
+            }
+        };
+        p.filter(items)
+    }
+
+    fn on_palette(&mut self, msg: PaletteMsg) -> Task<Message> {
+        match msg {
+            PaletteMsg::Query(q) => {
+                if let Some(p) = &mut self.palette {
+                    p.query = q;
+                    p.selected = 0;
+                }
+            }
+            PaletteMsg::Close => self.palette = None,
+            PaletteMsg::Submit => {
+                let selected = self.palette.as_ref().map_or(0, |p| p.selected);
+                return self.on_palette(PaletteMsg::Pick(selected));
+            }
+            PaletteMsg::Pick(i) => {
+                let item = self.palette_items().into_iter().nth(i);
+                self.palette = None;
+                match item {
+                    Some(palette::Item::Command { id, .. }) => return self.run(id),
+                    Some(palette::Item::Tab { index, .. }) => self.active = index,
+                    Some(palette::Item::Recent { path, .. }) => return self.handle(Message::OpenPicked(vec![path])),
+                    None => {}
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn on_banner(&mut self, id: TabId, action: BannerAction) {
+        let threshold = self.settings.files.large_file_threshold();
+        let Some(idx) = self.tab_index(id) else { return };
+        let tab = &mut self.tabs[idx];
+        match action {
+            BannerAction::Reload => {
+                if let Err(e) = tab.reload(threshold) {
+                    self.toast_error(format!("Could not reload: {e}"));
+                }
+            }
+            BannerAction::KeepMine => {
+                // Stop nagging until the file changes again.
+                tab.external = None;
+                tab.disk = tab.doc.path.as_deref().and_then(DiskStamp::read);
+            }
+            BannerAction::Close => self.close_tab_now(idx),
+        }
+    }
+
+    fn on_file_changed(&mut self, path: &Path) {
+        let threshold = self.settings.files.large_file_threshold();
+        let mut errors = Vec::new();
+        for tab in self.tabs.iter_mut().filter(|t| t.doc.path.as_deref() == Some(path)) {
+            if tab.saving {
+                continue;
+            }
+            let now = DiskStamp::read(path);
+            if now == tab.disk && tab.external.is_none() {
+                continue;
+            }
+            match now {
+                None => {
+                    tab.external = Some(External::Deleted);
+                    tab.disk = None;
+                }
+                Some(_) if !tab.is_dirty() && tab.external.is_none() => {
+                    if let Err(e) = tab.reload(threshold) {
+                        errors.push(e);
+                    }
+                }
+                Some(stamp) => {
+                    tab.external = Some(External::Changed);
+                    tab.disk = Some(stamp);
+                }
+            }
+        }
+        for e in errors {
+            self.toast_error(format!("Could not reload {}: {e}", path.display()));
+        }
+    }
+}
+
+fn load_keymap_file(path: &Path) -> (Overrides, Option<String>) {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match keymap::parse_overrides(&text) {
+            Ok(o) => (o, None),
+            Err(e) => (Overrides::default(), Some(format!("keymap.toml: {}", e.message()))),
+        },
+        Err(_) => (Overrides::default(), None),
+    }
+}
+
+/// Absolute, symlink-resolved path where possible, so the watcher's event
+/// paths and tab paths compare equal.
+fn absolute(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf()))
+}
+
+/// Move `byte` back to a char boundary (session offsets may be stale).
+fn clamp_char(doc: &Document, byte: usize) -> usize {
+    let buf = doc.buffer();
+    let byte = byte.min(buf.len_bytes());
+    let line = buf.byte_to_line(byte);
+    let start = buf.line_to_byte(line);
+    let text = buf.line(line);
+    let mut off = (byte - start).min(text.len());
+    while !text.is_char_boundary(off) {
+        off -= 1;
+    }
+    start + off
+}
