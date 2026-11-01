@@ -116,6 +116,7 @@ pub enum Message {
     SaveAsPicked(TabId, Option<PathBuf>),
     Saved(TabId, PathBuf, SavePoint, Result<Handoff<Option<mdedit_core::mapped::Remap>>, String>),
     Paste(TabId, Option<String>),
+    PasteTable(TabId, Option<String>),
     SetMode(Mode),
     Sidebar(SidebarTab),
     SidebarDragStart,
@@ -461,6 +462,7 @@ impl App {
         } else {
             task
         };
+        self.align_left_table();
         let derived = Task::batch([self.refresh_derived(), self.spawn_parse_jobs()]);
         if is_edit && let Some(t) = &mut self.trace {
             t.update_took(started.elapsed());
@@ -564,6 +566,10 @@ impl App {
             Message::Saved(id, path, point, result) => return self.on_saved(id, path, point, result),
             Message::Paste(id, Some(text)) => {
                 if let Some(tab) = self.tab_mut(id) {
+                    if let Some(result) = core_cmd::smart_paste(&tab.doc, tab.selection(), &text) {
+                        tab.apply_command(result);
+                        return Task::none();
+                    }
                     let range = tab.selection().range();
                     let txn = tab.doc.next_txn();
                     let end = range.start + text.len();
@@ -571,7 +577,13 @@ impl App {
                     tab.set_selection(Selection::cursor(end));
                 }
             }
-            Message::Paste(_, None) => {}
+            Message::Paste(_, None) | Message::PasteTable(_, None) => {}
+            Message::PasteTable(id, Some(text)) => {
+                if let Some(tab) = self.tab_mut(id) {
+                    let result = core_cmd::run(&tab.doc, tab.selection(), &core_cmd::DocCommand::PasteTable { text });
+                    tab.apply_command(result);
+                }
+            }
             Message::SetMode(mode) => self.set_mode(mode),
             Message::Sidebar(t) => {
                 if self.sidebar.visible && self.sidebar.tab == t {
@@ -638,6 +650,24 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    /// Auto-align a table in Edit mode when the cursor leaves it
+    /// (DESIGN_SYSTEM 8.4).
+    fn align_left_table(&mut self) {
+        let Some(tab) = self.tabs.get_mut(self.active) else { return };
+        if tab.doc.is_large() || tab.read_only() {
+            return;
+        }
+        let sel = tab.selection();
+        let now = core_cmd::table_range_at(&tab.doc, sel.head);
+        if now.is_none()
+            && let Some(old) = tab.table.take()
+            && let Some(result) = core_cmd::align_table_at(&tab.doc, old.start, sel)
+        {
+            tab.apply_command(result);
+        }
+        tab.table = now;
     }
 
     /// Reparse windows over 64 KB (and the initial parse of an opened
@@ -774,14 +804,12 @@ impl App {
                 if tab.read_only() {
                     return Task::none();
                 }
-                let result = core_cmd::run(&tab.doc, tab.selection(), cmd);
-                if !result.edits.is_empty() {
-                    let txn = tab.doc.next_txn();
-                    for edit in result.edits {
-                        tab.apply(&Edit { txn, origin: EditOrigin::Command, ..edit });
-                    }
+                if let core_cmd::DocCommand::PasteTable { .. } = cmd {
+                    let id = tab.id;
+                    return iced::clipboard::read().map(move |t| Message::PasteTable(id, t));
                 }
-                tab.set_selection(result.selection);
+                let result = core_cmd::run(&tab.doc, tab.selection(), cmd);
+                tab.apply_command(result);
                 Task::none()
             }
         }
@@ -1243,11 +1271,26 @@ impl App {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
-                if !tab.read_only() {
-                    tab.apply(&edit);
+                if tab.read_only() {
+                    return Task::none();
+                }
+                // Typed text (list continuation, indent, wrapping a selection)
+                // may become a smarter command (DESIGN_SYSTEM 8.3).
+                let sel = tab.selection();
+                let typed = edit.range == sel.range() && !edit.text.is_empty();
+                match typed.then(|| core_cmd::smart_input(&tab.doc, sel, &edit.text)).flatten() {
+                    Some(result) => {
+                        tab.apply_command(result);
+                        tab.skip_select = true;
+                    }
+                    None => tab.apply(&edit),
                 }
             }
-            Action::Select(sel) => tab.set_selection(sel),
+            Action::Select(sel) => {
+                if !std::mem::take(&mut tab.skip_select) {
+                    tab.set_selection(sel);
+                }
+            }
             Action::Scroll(y) => {
                 tab.editor.scroll_y = y;
                 // The jump happened; clear it so the same byte can be asked for again.

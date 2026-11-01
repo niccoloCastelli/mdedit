@@ -3,9 +3,9 @@
 //! Every action the shell offers is a command with a stable string id, a
 //! title, an optional icon and a default shortcut. The menu bar, the command
 //! palette and the keymap all read [`all`], so a command is defined once.
-//! Document commands (formatting) come from `mdedit_core::command`; this
-//! module adds the UI-only ones (files, tabs, panels, modes) and maps both
-//! into one list.
+//! Document commands (formatting, tables) come from
+//! `mdedit_core::command::registry()`; this module adds the UI-only ones
+//! (files, tabs, panels, modes) and puts both in one list.
 
 use mdedit_core::command::{self as core_cmd, DocCommand};
 
@@ -121,35 +121,10 @@ app_commands! {
     About, "help.about", "About mdedit", Some("info"), None;
 }
 
-/// Document commands and their ids, matching DESIGN_SYSTEM 8.2. Metadata
-/// from `mdedit_core::command::registry()` wins when it has the same id;
-/// these are the fallback until the commands workstream fills it in.
-type DocEntry = (&'static str, &'static str, Option<&'static str>, Option<&'static str>, DocCommand);
-
-fn doc_commands() -> Vec<DocEntry> {
-    use DocCommand::*;
-    vec![
-        ("format.bold", "Bold", Some("bold"), Some("Ctrl+B"), ToggleBold),
-        ("format.italic", "Italic", Some("italic"), Some("Ctrl+I"), ToggleItalic),
-        ("format.strike", "Strikethrough", Some("strikethrough"), Some("Ctrl+Shift+X"), ToggleStrike),
-        ("format.code", "Inline Code", Some("code"), Some("Ctrl+`"), ToggleInlineCode),
-        ("format.link", "Link", Some("link"), Some("Ctrl+K"), Link { url: None }),
-        ("format.paragraph", "Paragraph", Some("pilcrow"), Some("Ctrl+Alt+0"), SetHeading(0)),
-        ("format.h1", "Heading 1", Some("heading-1"), Some("Ctrl+Alt+1"), SetHeading(1)),
-        ("format.h2", "Heading 2", Some("heading-2"), Some("Ctrl+Alt+2"), SetHeading(2)),
-        ("format.h3", "Heading 3", Some("heading-3"), Some("Ctrl+Alt+3"), SetHeading(3)),
-        ("format.h4", "Heading 4", Some("heading-4"), Some("Ctrl+Alt+4"), SetHeading(4)),
-        ("format.h5", "Heading 5", Some("heading-5"), Some("Ctrl+Alt+5"), SetHeading(5)),
-        ("format.h6", "Heading 6", Some("heading-6"), Some("Ctrl+Alt+6"), SetHeading(6)),
-        ("format.bullet_list", "Bullet List", Some("list"), Some("Ctrl+Shift+8"), BulletList),
-        ("format.numbered_list", "Numbered List", Some("list-ordered"), Some("Ctrl+Shift+7"), NumberedList),
-        ("format.task_list", "Task List", Some("list-checks"), Some("Ctrl+Shift+9"), TaskList),
-        ("format.quote", "Quote", Some("quote"), Some("Ctrl+Shift+."), Quote),
-        ("insert.code_block", "Code Block", Some("square-code"), Some("Ctrl+Alt+C"), CodeBlock),
-        ("insert.table", "Table", Some("table"), Some("Ctrl+Alt+T"), InsertTable { rows: 3, cols: 3 }),
-        ("insert.hr", "Horizontal Rule", Some("minus"), None, HorizontalRule),
-    ]
-}
+/// Default shortcuts the app adds to document commands that have none in
+/// the core registry (Tab itself is typed into the editor and handled by
+/// smart input).
+const EXTRA_SHORTCUTS: &[(&str, &str)] = &[("edit.outdent", "Shift+Tab")];
 
 /// Every command, UI commands first. Built once.
 pub fn all() -> &'static [CommandEntry] {
@@ -166,15 +141,14 @@ pub fn all() -> &'static [CommandEntry] {
                 command: Command::App(cmd),
             })
             .collect();
-        let core = core_cmd::registry();
-        for (id, title, icon, shortcut, command) in doc_commands() {
-            let meta = core.iter().find(|m| m.id.0 == id);
+        for meta in core_cmd::registry() {
+            let extra = EXTRA_SHORTCUTS.iter().find(|(id, _)| *id == meta.id.0).map(|(_, s)| *s);
             out.push(CommandEntry {
-                id,
-                title: meta.map_or(title, |m| m.title),
-                icon: meta.map_or(icon, |m| m.icon),
-                shortcut: meta.map_or(shortcut, |m| m.shortcut),
-                command: Command::Doc(command),
+                id: meta.id.0,
+                title: meta.title,
+                icon: meta.icon,
+                shortcut: meta.shortcut.or(extra),
+                command: Command::Doc(meta.command()),
             });
         }
         out
@@ -212,6 +186,10 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("edit.find"),
                 Some("edit.find_in_files"),
                 None,
+                Some("edit.paste_table"),
+                Some("edit.indent"),
+                Some("edit.outdent"),
+                None,
                 Some("view.palette"),
             ],
         ),
@@ -235,7 +213,21 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("format.quote"),
             ],
         ),
-        ("Insert", &[Some("insert.code_block"), Some("insert.table"), Some("insert.hr")]),
+        (
+            "Insert",
+            &[
+                Some("insert.image"),
+                Some("insert.code_block"),
+                Some("insert.table"),
+                Some("insert.hr"),
+                None,
+                Some("table.format"),
+                Some("table.insert_row_below"),
+                Some("table.insert_column_right"),
+                Some("table.delete_row"),
+                Some("table.delete_column"),
+            ],
+        ),
         (
             "View",
             &[

@@ -50,6 +50,12 @@ pub struct Tab {
     pub untitled: usize,
     /// A background save is running (DESIGN_SYSTEM 8.6: never block typing).
     pub saving: bool,
+    /// Smart input replaced a typed edit: drop the widget's caret update
+    /// that follows it (its position is for the plain edit).
+    pub skip_select: bool,
+    /// The table the cursor is in, to auto-align it when the cursor leaves
+    /// (DESIGN_SYSTEM 8.4).
+    pub table: Option<std::ops::Range<usize>>,
 }
 
 impl Tab {
@@ -67,6 +73,8 @@ impl Tab {
             external: None,
             untitled,
             saving: false,
+            skip_select: false,
+            table: None,
         }
     }
 
@@ -110,6 +118,17 @@ impl Tab {
     pub fn set_selection(&mut self, sel: Selection) {
         self.editor.selection = sel;
         self.view.selection = sel;
+    }
+
+    /// Apply a command's edits as one undo step and take its selection.
+    pub fn apply_command(&mut self, result: mdedit_core::command::CommandResult) {
+        if !result.edits.is_empty() {
+            let txn = self.doc.next_txn();
+            for edit in result.edits {
+                self.apply(&Edit { txn, origin: EditOrigin::Command, ..edit });
+            }
+        }
+        self.set_selection(result.selection);
     }
 
     /// Apply an edit and move every cursor through it.
