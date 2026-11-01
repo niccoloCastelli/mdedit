@@ -4,8 +4,7 @@ This document defines how mdedit looks and behaves: visual tokens, themes,
 typography, components, and interaction rules. The code architecture lives in
 [ARCHITECTURE.md](ARCHITECTURE.md) and the feature scope in [SPEC.md](SPEC.md).
 
-Status: draft v0.1 (2026-11-01). Anything marked **Open** needs a decision
-before the matching piece is implemented.
+Status: v0.2 (2026-11-01), all open questions decided (see section 9).
 
 ## 1. Principles
 
@@ -398,9 +397,11 @@ table and can be overridden in a `keymap.toml`.
   track it and expose names for every control so it can be wired when iced
   ships it.
 
-## 9. Open questions
+## 9. Decisions log
 
-1. Should H2 section numbering in the PDF style (`01`, `02` in accent mono) be
-   on by default in View mode and exports, or opt-in?
-2. Edit mode default font: proportional (iA Writer style, proposed) or
-   monospace?
+- 2026-11-01: fonts are Hanken Grotesk and JetBrains Mono (the reference
+  PDF's fonts).
+- 2026-11-01: PDF-style H2 numbering (`01`, `02` in accent mono) is off by
+  default; a View/export setting turns it on.
+- 2026-11-01: Edit mode uses the proportional prose font by default, with
+  code blocks in monospace; monospace for the whole buffer is a setting.

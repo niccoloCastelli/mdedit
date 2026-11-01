@@ -4,7 +4,7 @@ A cross-platform, fast and lightweight markdown editor written in Rust.
 
 Status: draft v0.1 (2026-11-01). Visual and interaction rules are in
 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md); code structure is in
-[ARCHITECTURE.md](ARCHITECTURE.md). Items marked **Open** need a decision.
+[ARCHITECTURE.md](ARCHITECTURE.md). All open questions are decided (section 12).
 
 ## 1. Goals and non-goals
 
@@ -248,8 +248,8 @@ file, guarded by `version`.
   supported and recorded as one undo step.
 - Memory target: under 50 MB of overhead for a 1 GB file before edits.
 - If the file changes on disk while mapped, the app detects it (size / mtime /
-  watcher), stops reading the map, and offers reload. **Open:** on Windows the
-  mapped file can't be replaced by other programs while open; acceptable?
+  watcher), stops reading the map, and offers reload. On Windows the mapped
+  file can't be replaced by other programs while it is open (accepted).
 
 ## 9. Settings
 
@@ -275,9 +275,8 @@ file; changes apply live.
     These options map to both outputs.
   - optional `template.typ`: full Typst template for PDF for complete control.
   - optional `reference.docx`: styles copied into the generated DOCX.
-    **Open:** `docx-rs` can read documents, but copying styles from a reference
-    file needs some work on our side; v1 may ship with TOML-driven DOCX styles
-    only.
+    *Later:* v1 ships TOML-driven DOCX styles only; copying styles from a
+    `reference.docx` comes after v1.
 - **Formatting options** in the export dialog override the template for one
   export (page size, margins, TOC, numbering, include comments as
   footnotes/margin notes or not).
@@ -298,12 +297,9 @@ file; changes apply live.
   server (stdio and/or HTTP) can expose the same commands an agent would need:
   read, search, edit ranges, comment, checkpoint, export.
 
-## 12. Open questions summary
+## 12. Decisions log
 
-Decided on 2026-11-01: `.mdedit/project.toml`, local-only autocommits with
-checkpoint-only push, GFM tables, Hanken Grotesk + JetBrains Mono, libgit2
-only for push and optional.
-
-1. Windows: large files are locked while mapped; acceptable?
-2. DOCX templates: TOML styles only in v1, `reference.docx` later?
-3. Design system questions in DESIGN_SYSTEM section 9.
+All 2026-11-01: `.mdedit/project.toml`; local-only autocommits with
+checkpoint-only push; GFM tables; Hanken Grotesk + JetBrains Mono; libgit2
+only for push and optional; Windows large-file lock accepted; TOML-only DOCX
+templates in v1; H2 numbering opt-in; proportional font in Edit mode.
