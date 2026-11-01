@@ -173,9 +173,32 @@ fn main() {
 /// Deterministic markdown-ish text: headings, paragraphs, lists, code.
 fn generate(path: &Path, size: usize) {
     const WORDS: &[&str] = &[
-        "lorem", "ipsum", "dolor", "sit", "amet", "quantum", "Quantum", "editor", "buffer", "piece", "table",
-        "rope", "markdown", "render", "window", "search", "index", "line", "byte", "memory", "map", "giorni",
-        "café", "naïve", "über", "日本語",
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "quantum",
+        "Quantum",
+        "editor",
+        "buffer",
+        "piece",
+        "table",
+        "rope",
+        "markdown",
+        "render",
+        "window",
+        "search",
+        "index",
+        "line",
+        "byte",
+        "memory",
+        "map",
+        "giorni",
+        "café",
+        "naïve",
+        "über",
+        "日本語",
     ];
     let mut out = BufWriter::with_capacity(1 << 20, File::create(path).unwrap());
     let mut rng = 0x2545F4914F6CDD1Du64;

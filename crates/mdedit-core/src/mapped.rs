@@ -143,11 +143,7 @@ impl MappedBuffer {
     /// Indexing progress in 0..=1, for the scrollbar.
     pub fn index_progress(&self) -> f32 {
         let len = self.map.text().len();
-        if self.is_indexed() || len == 0 {
-            1.0
-        } else {
-            self.index.scanned.load(Ordering::Relaxed) as f32 / len as f32
-        }
+        if self.is_indexed() || len == 0 { 1.0 } else { self.index.scanned.load(Ordering::Relaxed) as f32 / len as f32 }
     }
 
     /// Block until indexing finished (tests, benches).

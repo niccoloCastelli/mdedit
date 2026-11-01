@@ -20,10 +20,10 @@ use std::ops::{ControlFlow, Range};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
+use regex_automata::Input;
 use regex_automata::meta::Regex;
 use regex_automata::util::captures::Captures;
 use regex_automata::util::syntax;
-use regex_automata::Input;
 
 use crate::buffer::TextBuffer;
 use crate::document::Document;
@@ -94,7 +94,8 @@ impl Searcher {
         if query.pattern.is_empty() {
             return Ok(Self { re: None, whole_word: query.whole_word });
         }
-        let pattern = if query.regex { Cow::Borrowed(query.pattern.as_str()) } else { Cow::Owned(escape(&query.pattern)) };
+        let pattern =
+            if query.regex { Cow::Borrowed(query.pattern.as_str()) } else { Cow::Owned(escape(&query.pattern)) };
         let re = Regex::builder()
             .syntax(syntax::Config::new().case_insensitive(!query.case_sensitive).multi_line(true).crlf(true))
             .build(&pattern)
@@ -122,12 +123,10 @@ impl Searcher {
         while pos < end {
             let h0 = pos.saturating_sub(CONTEXT);
             let hay = read_bytes(buf, h0..(pos + WINDOW + OVERLAP + 2 * EXTEND + CONTEXT).min(len));
-            let window_end = if pos + WINDOW >= end { end } else { (h0 + boundary_after(&hay, pos + WINDOW - h0)).min(end) };
-            let span_end = if window_end >= end {
-                end
-            } else {
-                (h0 + boundary_after(&hay, window_end + OVERLAP - h0)).min(end)
-            };
+            let window_end =
+                if pos + WINDOW >= end { end } else { (h0 + boundary_after(&hay, pos + WINDOW - h0)).min(end) };
+            let span_end =
+                if window_end >= end { end } else { (h0 + boundary_after(&hay, window_end + OVERLAP - h0)).min(end) };
             let mut at = pos;
             let mut last_end = pos;
             while at < window_end {
@@ -399,8 +398,8 @@ mod tests {
         assert_eq!(ranges(&buf, &ci).len(), 5);
         let ww = SearchQuery { whole_word: true, ..q("foo") };
         assert_eq!(ranges(&buf, &ww), [4..7, 29..32]);
-        assert_eq!(ranges(&buf, &q("a.b")), [13..16]);
-        assert_eq!(ranges(&buf, &q("(x)")), [17..20]);
+        assert_eq!(ranges(&buf, &q("a.b")), vec![13..16]);
+        assert_eq!(ranges(&buf, &q("(x)")), vec![17..20]);
         assert!(ranges(&buf, &q("")).is_empty());
     }
 
@@ -417,7 +416,7 @@ mod tests {
         let re = SearchQuery { regex: true, ..q(r"^#+ (\w+)$") };
         assert_eq!(ranges(&buf, &re), [0..5, 12..18]);
         let empty = SearchQuery { regex: true, ..q("x*") };
-        assert_eq!(ranges(&buf, &empty), [9..10]);
+        assert_eq!(ranges(&buf, &empty), vec![9..10]);
         let bad = SearchQuery { regex: true, ..q("(") };
         assert!(matches!(find_all(&buf, &bad), Err(SearchError::InvalidRegex(_))));
     }
