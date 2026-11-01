@@ -1,0 +1,26 @@
+[package]
+name = "mdedit"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, lightweight, cross-platform markdown editor"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# GUI. `advanced` exposes the widget/renderer traits needed for a custom
+# editor widget that only lays out the visible lines; `canvas` is there for
+# custom drawing (gutter, cursor, selections); `tokio` runs async tasks such
+# as file I/O off the UI thread.
+iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }
+# Rope text buffer: O(log n) edits and line lookups on large files.
+ropey = "1.6"
+# Markdown parsing. Fast pull parser; reparse only the blocks touched by an edit.
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+# Native open/save dialogs (XDG portal on Linux, no GTK dev headers needed).
+rfd = "0.17"
+tokio = { version = "1", features = ["fs"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
