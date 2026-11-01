@@ -114,7 +114,7 @@ pub enum Message {
     OpenPicked(Vec<PathBuf>),
     Loaded(PathBuf, Result<Handoff<Document>, String>),
     SaveAsPicked(TabId, Option<PathBuf>),
-    Saved(TabId, PathBuf, SavePoint, Result<(), String>),
+    Saved(TabId, PathBuf, SavePoint, Result<Handoff<Option<mdedit_core::mapped::Remap>>, String>),
     Paste(TabId, Option<String>),
     SetMode(Mode),
     Sidebar(SidebarTab),
@@ -769,7 +769,7 @@ impl App {
             Command::App(cmd) => self.run_app(*cmd),
             Command::Doc(cmd) => {
                 let Some(tab) = self.active_tab_mut() else { return Task::none() };
-                if tab.doc.format.read_only {
+                if tab.read_only() {
                     return Task::none();
                 }
                 let result = core_cmd::run(&tab.doc, tab.selection(), cmd);
@@ -993,7 +993,7 @@ impl App {
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
         tab.editor.full_width = self.settings.editor.full_width;
-        if tab.doc.format.read_only {
+        if tab.read_only() {
             self.toast("Not valid UTF-8: opened read-only.");
         }
         if let Some(t) = &restored {
@@ -1067,21 +1067,15 @@ impl App {
 
     fn start_save(&mut self, id: TabId, to: Option<PathBuf>) -> Task<Message> {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
-        if tab.doc.mapped().is_some() {
-            // A mapped buffer must be remapped onto the file it wrote, so it
-            // saves through `io::save` for now (blocking; background save of
-            // large files comes with large-file mode in the app).
-            let target = to.clone().or_else(|| tab.doc.path.clone());
-            let result = mdedit_core::io::save(&mut tab.doc, to.as_deref()).map_err(|e| e.to_string());
-            let point = tab.doc.save_point();
-            let path = target.unwrap_or_default();
-            return self.on_saved(id, path, point, result);
-        }
         match tab.begin_save(to.as_deref()) {
             Ok(job) => {
                 let (path, point) = (job.path.clone(), job.point);
                 Task::perform(
-                    async move { tokio::task::spawn_blocking(move || job.run()).await.map_err(|e| e.to_string())? },
+                    async move {
+                        let remap =
+                            tokio::task::spawn_blocking(move || job.run()).await.map_err(|e| e.to_string())??;
+                        Ok(Handoff::new(remap))
+                    },
                     move |r| Message::Saved(id, path.clone(), point, r),
                 )
             }
@@ -1093,12 +1087,18 @@ impl App {
         }
     }
 
-    fn on_saved(&mut self, id: TabId, path: PathBuf, point: SavePoint, result: Result<(), String>) -> Task<Message> {
+    fn on_saved(
+        &mut self,
+        id: TabId,
+        path: PathBuf,
+        point: SavePoint,
+        result: Result<Handoff<Option<mdedit_core::mapped::Remap>>, String>,
+    ) -> Task<Message> {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match result {
-            Ok(()) => {
+            Ok(remap) => {
                 let was = tab.doc.path.clone();
-                tab.finish_save(path.clone(), point);
+                tab.finish_save(path.clone(), point, remap.take().flatten());
                 if was.as_deref() != Some(&path) {
                     self.session.push_recent(&path);
                     self.save_session();
@@ -1241,7 +1241,7 @@ impl App {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
-                if !tab.doc.format.read_only {
+                if !tab.read_only() {
                     tab.apply(&edit);
                 }
             }
@@ -1249,7 +1249,7 @@ impl App {
             Action::Scroll(y) => tab.editor.scroll_y = y,
             Action::Copy(text) => return iced::clipboard::write(text),
             Action::Paste => {
-                if tab.doc.format.read_only {
+                if tab.read_only() {
                     return Task::none();
                 }
                 return iced::clipboard::read().map(move |t| Message::Paste(id, t));
@@ -1265,7 +1265,7 @@ impl App {
         let Some(tab) = self.tab_mut(id) else { return Task::none() };
         match action {
             Action::Edit(edit) => {
-                if !tab.doc.format.read_only && tab.mode == Mode::View {
+                if !tab.read_only() && tab.mode == Mode::View {
                     tab.apply(&edit);
                 }
             }
@@ -1384,6 +1384,13 @@ impl App {
             }
             let now = DiskStamp::read(path);
             if now == tab.disk && tab.external.is_none() {
+                continue;
+            }
+            // A mapped file is never reloaded silently: the map may be stale.
+            if let Some(m) = tab.doc.mapped() {
+                if m.disk_change() != mdedit_core::DiskChange::Unchanged {
+                    tab.external = Some(if now.is_some() { External::Changed } else { External::Deleted });
+                }
                 continue;
             }
             match now {

@@ -240,7 +240,7 @@ impl App {
                     small_button(t, "Close tab", Btn::Secondary, Some(Message::Banner(id, BannerAction::Close))),
                 ],
             ),
-            None if tab.doc.format.read_only => (
+            None if tab.read_only() => (
                 style::Banner::Info,
                 "READ-ONLY",
                 "This file is not valid UTF-8. It is shown with replacement characters and can't be saved.",
@@ -419,7 +419,7 @@ impl App {
                 ("new file", muted)
             };
             left = left.push(text(label).size(UI_SMALL).color(color));
-            if tab.doc.format.read_only {
+            if tab.read_only() {
                 left = left.push(text("read-only").size(UI_SMALL).color(c(t, T::WarningText)));
             }
             if tab.doc.is_large() {

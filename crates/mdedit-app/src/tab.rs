@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use mdedit_core::document::SavePoint;
 use mdedit_core::io::{self, FileFormat};
+use mdedit_core::mapped::Remap;
 use mdedit_core::{Document, Edit, EditOrigin, Selection, TextBuffer};
 use mdedit_editor::EditorState;
 use mdedit_view::ViewState;
@@ -78,6 +79,11 @@ impl Tab {
         }
     }
 
+    /// Not valid UTF-8 (for large files, known once indexing has scanned it).
+    pub fn read_only(&self) -> bool {
+        self.doc.format.read_only || self.doc.mapped().and_then(|m| m.utf8_valid()) == Some(false)
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.doc.is_dirty()
     }
@@ -120,14 +126,14 @@ impl Tab {
         let job = self.begin_save(to)?;
         let path = job.path.clone();
         let point = job.point;
-        job.run()?;
-        self.finish_save(path, point);
+        let remap = job.run()?;
+        self.finish_save(path, point, remap);
         Ok(())
     }
 
     /// Snapshot the document for a background save.
     pub fn begin_save(&mut self, to: Option<&Path>) -> Result<SaveJob, String> {
-        if self.doc.format.read_only {
+        if self.read_only() {
             return Err(io::IoError::ReadOnly.to_string());
         }
         let path = to.map(Path::to_path_buf).or_else(|| self.doc.path.clone()).ok_or("no path to save to")?;
@@ -137,8 +143,12 @@ impl Tab {
     }
 
     /// The snapshot taken at `point` is on disk at `path`.
-    pub fn finish_save(&mut self, path: PathBuf, point: SavePoint) {
+    pub fn finish_save(&mut self, path: PathBuf, point: SavePoint, remap: Option<Remap>) {
         self.saving = false;
+        if let Some(remap) = remap {
+            // Point the map at the new file; a no-op if edits came in since.
+            let _ = self.doc.remap(remap);
+        }
         self.doc.mark_saved_at(point);
         self.disk = DiskStamp::read(&path);
         self.doc.path = Some(path);
@@ -189,8 +199,14 @@ pub struct SaveJob {
 }
 
 impl SaveJob {
-    pub fn run(&self) -> Result<(), String> {
-        io::write_atomic(&self.path, self.snapshot.as_ref(), self.format).map_err(|e| e.to_string())
+    /// Write the snapshot. A large (mapped) document streams its pieces and
+    /// returns the [`Remap`] to hand to `Document::remap`.
+    pub fn run(&self) -> Result<Option<Remap>, String> {
+        match self.snapshot.as_mapped() {
+            Some(m) => m.save_to(&self.path, self.format).map(Some),
+            None => io::write_atomic(&self.path, self.snapshot.as_ref(), self.format).map(|()| None),
+        }
+        .map_err(|e| e.to_string())
     }
 }
 
