@@ -65,6 +65,8 @@ pub enum Inline {
     },
     FootnoteRef {
         label: String,
+        /// Display number from the [`LinkResolver`] (definition order).
+        number: Option<usize>,
         source: Range<usize>,
     },
     SoftBreak {
@@ -120,6 +122,29 @@ pub fn plain_text(inlines: &[Inline]) -> String {
     let mut out = String::new();
     walk(inlines, &mut out);
     out
+}
+
+/// Kind of a GitHub alert blockquote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Callout {
+    Note,
+    Tip,
+    Important,
+    Warning,
+    Caution,
+}
+
+impl Callout {
+    /// The title shown above the body.
+    pub fn title(self) -> &'static str {
+        match self {
+            Callout::Note => "Note",
+            Callout::Tip => "Tip",
+            Callout::Important => "Important",
+            Callout::Warning => "Warning",
+            Callout::Caution => "Caution",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +204,8 @@ pub enum LayoutNode {
         source: Range<usize>,
     },
     BlockQuote {
+        /// A GitHub alert (`> [!NOTE]`); its marker line is not in `children`.
+        callout: Option<Callout>,
         children: Vec<LayoutNode>,
         source: Range<usize>,
     },
@@ -210,6 +237,7 @@ pub enum LayoutNode {
     },
     FootnoteDefinition {
         label: String,
+        number: Option<usize>,
         children: Vec<LayoutNode>,
         source: Range<usize>,
     },

@@ -263,6 +263,17 @@ fn blocks_of(doc: &Document) -> Vec<Block> {
     out
 }
 
+/// See [`Frame::footnotes`].
+fn footnote_key(doc: &Document, blocks: &[Block]) -> u64 {
+    let buf = doc.buffer();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for b in blocks.iter().filter(|b| b.kind == BlockKind::FootnoteDefinition) {
+        let head = buf.line(buf.byte_to_line(b.bytes.start));
+        head.split("]:").next().hash(&mut h);
+    }
+    h.finish()
+}
+
 fn estimate(block: &Block) -> f32 {
     let len = block.bytes.len() as f32;
     let rows = (len / 80.0).ceil().max(1.0);
@@ -298,6 +309,9 @@ struct Frame<'b> {
     /// Block whose source is shown, and the source range shown.
     reveal: Option<(usize, Range<usize>)>,
     zoom: f32,
+    /// Hash of the footnote labels in order: footnote numbers come from it,
+    /// so blocks that mention footnotes are laid out again when it changes.
+    footnotes: u64,
 }
 
 impl<'a, Message> View<'a, Message> {
@@ -405,8 +419,15 @@ impl<'a, Message> View<'a, Message> {
         (shown.start as isize - block.bytes.start as isize).hash(&mut h);
         table_cursor.map(|c| c - block.bytes.start).hash(&mut h);
         reveal.is_some().hash(&mut h);
+        let mut footnotes = block.kind == BlockKind::FootnoteDefinition;
+        let mut last = 0u8;
         for chunk in buf.chunks(shown.clone()) {
+            footnotes |= (last == b'[' && chunk.first() == Some(&b'^')) || chunk.windows(2).any(|w| w == b"[^");
+            last = chunk.last().copied().unwrap_or(last);
             chunk.hash(&mut h);
+        }
+        if footnotes {
+            frame.footnotes.hash(&mut h);
         }
         let key = h.finish();
         st.tick += 1;
@@ -443,7 +464,12 @@ impl<'a, Message> View<'a, Message> {
                 })
                 .collect();
             let code = matches!(block.kind, BlockKind::CodeBlock { .. } | BlockKind::Math | BlockKind::Mermaid);
-            layout::layout_source(&ctx, &lines, code, top)
+            let mut laid = layout::layout_source(&ctx, &lines, code, top);
+            if block.kind == BlockKind::Paragraph && lines.iter().any(|(l, ..)| l.contains("![")) {
+                let node = mdedit_render::layout_block(block, buf).node;
+                layout::append_images(&ctx, &mut laid, &node);
+            }
+            laid
         } else {
             let refs: &IndexRefs<'_> = match (refs.as_ref(), doc.blocks()) {
                 (Some(r), _) => r,
@@ -475,8 +501,13 @@ impl<'a, Message> View<'a, Message> {
         let blocks = blocks_of(self.doc);
         self.sync(st, &blocks);
         let selection = self.selection(st);
-        let frame =
-            Frame { blocks: &blocks, selection, reveal: self.reveal_for(&blocks, selection.head), zoom: self.zoom() };
+        let frame = Frame {
+            blocks: &blocks,
+            selection,
+            reveal: self.reveal_for(&blocks, selection.head),
+            zoom: self.zoom(),
+            footnotes: footnote_key(self.doc, &blocks),
+        };
         let mut refs = None;
         let height = st.size.height;
         for _attempt in 0..3 {
@@ -1578,6 +1609,81 @@ mod tests {
         }
         assert!(st.visible.len() > 3);
         assert_eq!(st.visible[0].y, 0.0);
+    }
+
+    fn texts(st: &State, block: usize) -> Vec<String> {
+        let v = st.visible.iter().find(|v| v.index == block).expect("visible block");
+        v.layout.texts().map(|t| t.text.replace('\u{2060}', "")).collect()
+    }
+
+    #[test]
+    fn footnotes_show_numbers() {
+        let d = doc("One[^b] two[^a].\n\n[^a]: First.\n\n[^b]: Second.\n");
+        let st = prepared(&d, &ViewState { read_only: true, ..ViewState::default() });
+        assert_eq!(texts(&st, 0), ["One2 two1."]);
+        assert_eq!(texts(&st, 1)[0], "1");
+        assert_eq!(texts(&st, 2)[0], "2");
+    }
+
+    #[test]
+    fn footnote_numbers_follow_renamed_definitions() {
+        let mut d = doc("See[^x].\n\n[^y]: Y.\n\n[^x]: X.\n");
+        let state = ViewState { read_only: true, ..ViewState::default() };
+        let theme = Theme::ember_light();
+        let view = View::new(&d, &state, &theme, |a| a);
+        let mut st = State { size: Size::new(1000.0, 800.0), width: 720.0, wide: 960.0, ..State::default() };
+        view.prepare(&mut st);
+        assert_eq!(texts(&st, 0), ["See2."]);
+        drop(view);
+        // Swap the definitions' order: the reference block's text is
+        // unchanged but its number is not.
+        let len = d.buffer().len_bytes();
+        let text = "[^x]: X.\n\n[^y]: Y.\n".to_string();
+        d.apply(&Edit { range: 10..len, text, origin: EditOrigin::User, txn: TxnId(0) });
+        let view = View::new(&d, &state, &theme, |a| a);
+        view.prepare(&mut st);
+        assert_eq!(texts(&st, 0), ["See1."]);
+    }
+
+    #[test]
+    fn github_alerts_are_callouts() {
+        let d = doc("> [!WARNING]\n> Mind the gap.\n");
+        let st = prepared(&d, &ViewState { read_only: true, ..ViewState::default() });
+        assert_eq!(texts(&st, 0), ["WARNING", "Mind the gap."]);
+        let look = Look::new(&Theme::ember_light());
+        let v = &st.visible[0];
+        let first = &v.layout.items[0];
+        assert!(
+            matches!(first, Item::Quad { color, rect, .. } if *color == look.colors.warning_bg && rect.height > 40.0)
+        );
+    }
+
+    #[test]
+    fn revealed_image_stays_under_its_source() {
+        let dir = tempfile::tempdir().unwrap();
+        image::RgbaImage::from_pixel(300, 100, image::Rgba([200, 80, 40, 255])).save(dir.path().join("a.png")).unwrap();
+        let mut d = doc("Intro.\n\n![pic](a.png)\n");
+        d.path = Some(dir.path().join("doc.md"));
+        // Caret inside the image markdown: the block shows its source.
+        let state = ViewState { selection: Selection::cursor(12), ..ViewState::default() };
+        let started = std::time::Instant::now();
+        loop {
+            let st = prepared(&d, &state);
+            let v = &st.visible[1];
+            assert!(v.layout.revealed);
+            assert_eq!(texts(&st, 1), ["![pic](a.png)"]);
+            let text_bottom = v.layout.texts().map(|t| t.bounds().y + t.bounds().height).fold(0.0, f32::max);
+            if let Some(rect) = v.layout.items.iter().find_map(|i| match i {
+                Item::Image { rect, .. } => Some(*rect),
+                _ => None,
+            }) {
+                assert!(rect.y >= text_bottom && (rect.width - 300.0).abs() < 0.5, "{rect:?}");
+                assert!(v.layout.height >= rect.y + rect.height);
+                break;
+            }
+            assert!(started.elapsed().as_secs() < 10, "image never loaded");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 
     #[test]

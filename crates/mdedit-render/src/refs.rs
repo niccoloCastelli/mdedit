@@ -1,7 +1,7 @@
 //! Document-global definitions a block needs from elsewhere: link reference
 //! definitions and footnote definitions.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use mdedit_core::parse::{BlockIndex, markdown_options};
 use mdedit_core::{BlockKind, TextBuffer};
@@ -18,6 +18,12 @@ pub struct LinkDef {
 pub trait LinkResolver {
     fn link_ref(&self, label: &str) -> Option<LinkDef>;
     fn has_footnote(&self, label: &str) -> bool;
+    /// Display number of a footnote: definitions are numbered 1, 2, ... in
+    /// document order (the view shows them where they are written, so the
+    /// numbers read in order there).
+    fn footnote_number(&self, _label: &str) -> Option<usize> {
+        None
+    }
 }
 
 /// CommonMark label matching: case-folded, inner whitespace collapsed,
@@ -44,7 +50,7 @@ pub fn normalize_label(label: &str) -> String {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RefTable {
     links: HashMap<String, LinkDef>,
-    footnotes: HashSet<String>,
+    footnotes: HashMap<String, usize>,
 }
 
 impl RefTable {
@@ -68,8 +74,11 @@ impl RefTable {
         self.links.entry(normalize_label(label)).or_insert(def);
     }
 
+    /// Add a footnote definition; it gets the next number unless the
+    /// label is already defined.
     pub fn insert_footnote(&mut self, label: &str) {
-        self.footnotes.insert(normalize_label(label));
+        let next = self.footnotes.len() + 1;
+        self.footnotes.entry(normalize_label(label)).or_insert(next);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -83,7 +92,11 @@ impl LinkResolver for RefTable {
     }
 
     fn has_footnote(&self, label: &str) -> bool {
-        self.footnotes.contains(&normalize_label(label))
+        self.footnotes.contains_key(&normalize_label(label))
+    }
+
+    fn footnote_number(&self, label: &str) -> Option<usize> {
+        self.footnotes.get(&normalize_label(label)).copied()
     }
 }
 
@@ -92,23 +105,27 @@ impl LinkResolver for RefTable {
 /// Rebuild it when the index changes (cheap: one pass over the blocks).
 pub struct IndexRefs<'a> {
     index: &'a BlockIndex,
-    footnotes: HashSet<String>,
+    footnotes: HashMap<String, usize>,
 }
 
 impl<'a> IndexRefs<'a> {
     pub fn new(index: &'a BlockIndex, buf: &dyn TextBuffer) -> Self {
-        let footnotes = index
-            .blocks()
-            .iter()
-            .filter(|b| b.kind == BlockKind::FootnoteDefinition)
-            .filter_map(|b| {
-                let head = buf.line(buf.byte_to_line(b.bytes.start));
-                let label = head.trim_start().strip_prefix("[^")?;
-                Some(normalize_label(&label[..label.find("]:")?]))
-            })
-            .collect();
+        let mut footnotes = HashMap::new();
+        for label in footnote_labels(index, buf) {
+            let next = footnotes.len() + 1;
+            footnotes.entry(label).or_insert(next);
+        }
         Self { index, footnotes }
     }
+}
+
+/// Normalised labels of the top-level footnote definitions, in order.
+pub fn footnote_labels<'b>(index: &'b BlockIndex, buf: &'b dyn TextBuffer) -> impl Iterator<Item = String> + 'b {
+    index.blocks_in(0..buf.len_bytes()).filter(|b| b.kind == BlockKind::FootnoteDefinition).filter_map(|b| {
+        let head = buf.line(buf.byte_to_line(b.bytes.start));
+        let label = head.trim_start().strip_prefix("[^")?;
+        Some(normalize_label(&label[..label.find("]:")?]))
+    })
 }
 
 impl LinkResolver for IndexRefs<'_> {
@@ -118,7 +135,11 @@ impl LinkResolver for IndexRefs<'_> {
     }
 
     fn has_footnote(&self, label: &str) -> bool {
-        self.footnotes.contains(&normalize_label(label))
+        self.footnotes.contains_key(&normalize_label(label))
+    }
+
+    fn footnote_number(&self, label: &str) -> Option<usize> {
+        self.footnotes.get(&normalize_label(label)).copied()
     }
 }
 
@@ -138,5 +159,6 @@ mod tests {
         assert_eq!(t.link_ref("FOO"), Some(LinkDef { dest: "/url".into(), title: "T".into() }));
         assert!(t.has_footnote("N"));
         assert!(!t.has_footnote("m"));
+        assert_eq!(t.footnote_number("n"), Some(1));
     }
 }
