@@ -24,6 +24,8 @@ pub enum AppCommand {
     Save,
     SaveAs,
     SaveAll,
+    ExportPdf,
+    ExportDocx,
     CloseTab,
     Quit,
     Undo,
@@ -93,6 +95,8 @@ app_commands! {
     Save, "file.save", "Save", Some("save"), Some("Ctrl+S");
     SaveAs, "file.save_as", "Save As…", None, Some("Ctrl+Shift+S");
     SaveAll, "file.save_all", "Save All", None, None;
+    ExportPdf, "file.export_pdf", "Export as PDF…", Some("file-down"), Some("Ctrl+Shift+E");
+    ExportDocx, "file.export_docx", "Export as DOCX…", Some("file-down"), None;
     CloseTab, "file.close_tab", "Close Tab", Some("x"), Some("Ctrl+W");
     Quit, "file.quit", "Quit", None, Some("Ctrl+Q");
     Undo, "edit.undo", "Undo", Some("undo"), Some("Ctrl+Z");
@@ -191,6 +195,9 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("file.save"),
                 Some("file.save_as"),
                 Some("file.save_all"),
+                None,
+                Some("file.export_pdf"),
+                Some("file.export_docx"),
                 None,
                 Some("file.close_tab"),
                 Some("file.quit"),

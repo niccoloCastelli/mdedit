@@ -4321,6 +4321,7 @@ dependencies = [
  "directories",
  "iced",
  "image",
+ "jiff",
  "mdedit-core",
  "mdedit-editor",
  "mdedit-export",

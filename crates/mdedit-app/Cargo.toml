@@ -36,3 +36,4 @@ winresource.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+jiff.workspace = true

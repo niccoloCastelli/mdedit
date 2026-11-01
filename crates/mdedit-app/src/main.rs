@@ -3,6 +3,7 @@
 mod app;
 mod command;
 mod context;
+mod export_ui;
 mod keymap;
 mod palette;
 mod separator;
