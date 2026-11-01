@@ -8,5 +8,11 @@ license.workspace = true
 [dependencies]
 mdedit-core.workspace = true
 mdedit-render.workspace = true
+mdedit-editor.workspace = true
 mdedit-theme = { workspace = true, features = ["iced"] }
 iced.workspace = true
+image.workspace = true
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

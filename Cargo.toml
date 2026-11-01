@@ -26,8 +26,9 @@ mdedit-view = { path = "crates/mdedit-view" }
 
 # GUI. `advanced` exposes the widget/renderer traits needed for custom widgets
 # that only lay out what is visible; `canvas` for custom drawing; `tokio` runs
-# async tasks off the UI thread; `svg` for Lucide icons (and math later).
-iced = { version = "0.14", features = ["advanced", "canvas", "tokio", "svg"] }
+# async tasks off the UI thread; `svg` for Lucide icons (and math later);
+# `image-without-codecs` draws images mdedit-view decodes itself.
+iced = { version = "0.14", features = ["advanced", "canvas", "tokio", "svg", "image-without-codecs"] }
 # Native open/save dialogs (XDG portal on Linux, no GTK dev headers needed).
 rfd = "0.17"
 tokio = { version = "1", features = ["fs", "rt", "sync", "time"] }
