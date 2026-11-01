@@ -31,6 +31,8 @@ mdedit-view = { path = "crates/mdedit-view" }
 iced = { version = "0.14", features = ["advanced", "canvas", "tokio", "svg", "image-without-codecs"] }
 # Native open/save dialogs (XDG portal on Linux, no GTK dev headers needed).
 rfd = "0.17"
+# Embeds the app icon in the Windows exe (mdedit-app build.rs, Windows targets only).
+winresource = { version = "0.1", default-features = false }
 tokio = { version = "1", features = ["fs", "rt", "sync", "time"] }
 
 # Core

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Stub for the M5 macOS bundle: mdedit.app/Contents/Info.plist, with
+     assets/icons/mdedit.icns and mdedit-file-md.icns copied to
+     Contents/Resources/. Version strings are filled in at bundle time. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>mdedit</string>
+  <key>CFBundleDisplayName</key>
+  <string>mdedit</string>
+  <key>CFBundleIdentifier</key>
+  <string>org.mdedit.mdedit</string>
+  <key>CFBundleExecutable</key>
+  <string>mdedit</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.1.0</string>
+  <key>CFBundleIconFile</key>
+  <string>mdedit</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Markdown document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Default</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>mdedit-file-md</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>md</string>
+        <string>markdown</string>
+      </array>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
