@@ -81,10 +81,20 @@ pub fn decode(bytes: Vec<u8>) -> (FileFormat, String) {
 
 /// Open a file as a document.
 pub fn load(path: &Path, large_file_threshold: u64) -> Result<Document, IoError> {
+    load_inner(path, large_file_threshold, false)
+}
+
+/// [`load`] with the initial parse left as a job for a worker
+/// (`Document::take_parse_job`), so the first frame comes sooner.
+pub fn load_deferred(path: &Path, large_file_threshold: u64) -> Result<Document, IoError> {
+    load_inner(path, large_file_threshold, true)
+}
+
+fn load_inner(path: &Path, large_file_threshold: u64, defer_parse: bool) -> Result<Document, IoError> {
     // Large files will get a MappedBuffer here (large-files workstream).
     let _ = large_file_threshold;
     let (format, text) = decode(fs::read(path)?);
-    let mut doc = Document::from_text(&text);
+    let mut doc = if defer_parse { Document::from_text_deferred(&text) } else { Document::from_text(&text) };
     doc.format = format;
     doc.path = Some(path.to_path_buf());
     Ok(doc)

@@ -222,9 +222,11 @@ impl<T> std::fmt::Debug for Handoff<T> {
 
 /// Load a file off the UI thread.
 pub async fn load(path: PathBuf, threshold: u64) -> Result<Handoff<Document>, String> {
-    tokio::task::spawn_blocking(move || io::load(&path, threshold).map(Handoff::new).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || {
+        io::load_deferred(&path, threshold).map(Handoff::new).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -319,8 +321,13 @@ mod perf {
         std::fs::write(&path, &text).unwrap();
 
         let t = Instant::now();
-        let doc = io::load(&path, u64::MAX).unwrap();
+        let mut doc = io::load_deferred(&path, u64::MAX).unwrap();
         let open = t.elapsed();
+        let t = Instant::now();
+        while let Some(job) = doc.take_parse_job() {
+            doc.finish_parse(job.run());
+        }
+        let parse = t.elapsed();
         let mut tab = Tab::new(1, doc, Mode::Edit, 0);
 
         let mut times = Vec::new();
@@ -328,6 +335,9 @@ mod perf {
         for k in 0..200 {
             let t = Instant::now();
             tab.apply(&Edit::insert(at + k, "x", EditOrigin::User, mdedit_core::TxnId(0)));
+            while let Some(job) = tab.doc.take_parse_job() {
+                tab.doc.finish_parse(job.run());
+            }
             times.push(t.elapsed());
         }
         times.sort();
@@ -335,6 +345,9 @@ mod perf {
         let t = Instant::now();
         tab.save(Some(&dir.path().join("copy.md"))).unwrap();
         let save = t.elapsed();
-        eprintln!("10 MB: load {open:?}, apply p50 {:?} p99 {p99:?}, save {save:?}", times[times.len() / 2]);
+        eprintln!(
+            "10 MB: load {open:?} (parse on worker {parse:?}), apply p50 {:?} p99 {p99:?}, save {save:?}",
+            times[times.len() / 2]
+        );
     }
 }
