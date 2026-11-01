@@ -7,8 +7,8 @@ use std::io::Cursor;
 
 use docx_rs::{
     AbstractNumbering, AlignmentType, BorderType, BreakType, Docx, FieldCharType, Footer, Footnote, Header, Hyperlink,
-    HyperlinkType, IndentLevel, InstrText, Level, LevelJc, LevelOverride, LevelText, LineSpacing, LineSpacingType,
-    NumPages, NumberFormat, Numbering, NumberingId, PageMargin, PageNum, Paragraph, ParagraphBorder,
+    HyperlinkData, HyperlinkType, IndentLevel, InstrText, Level, LevelJc, LevelOverride, LevelText, LineSpacing,
+    LineSpacingType, NumPages, NumberFormat, Numbering, NumberingId, PageMargin, PageNum, Paragraph, ParagraphBorder,
     ParagraphBorderPosition, ParagraphBorders, ParagraphChild, Pic, Run, RunFonts, Shading, ShdType, SpecialIndentType,
     Start, Style, StyleType, Tab, TabValueType, Table, TableBorder, TableBorderPosition, TableBorders, TableCell,
     TableCellMargins, TableRow, VertAlignType, WidthType,
@@ -108,6 +108,7 @@ fn build(doc: &Doc, s: &Settings, image: &mut ImageLoader) -> Docx {
         numberings: Vec::new(),
         next_pic: 1,
         next_bookmark: 1,
+        next_hyperlink: 1,
         counters: [0; 6],
         slugs: doc.slugs().into_iter().map(String::from).collect(),
     };
@@ -186,6 +187,7 @@ struct Writer<'a> {
     numberings: Vec<(usize, u64)>,
     next_pic: usize,
     next_bookmark: usize,
+    next_hyperlink: usize,
     counters: [usize; 6],
     slugs: Vec<String>,
 }
@@ -490,6 +492,12 @@ impl Writer<'_> {
                 };
                 let inner = self.inlines(Paragraph::new(), content, fmt);
                 let mut link = Hyperlink::new(target, kind);
+                // docx-rs takes the relationship id from a process-wide
+                // counter; number links per document so output is stable.
+                if let HyperlinkData::External { rid, .. } = &mut link.link {
+                    *rid = format!("rIdHyperlink{}", self.next_hyperlink);
+                    self.next_hyperlink += 1;
+                }
                 link.children = inner
                     .children
                     .into_iter()
