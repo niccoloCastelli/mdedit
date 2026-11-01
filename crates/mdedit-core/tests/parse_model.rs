@@ -173,3 +173,75 @@ proptest! {
         }
     }
 }
+
+/// Replays an edit sequence (as `EditSpec` fractions), checking after each
+/// edit; `deferred` takes the parse-job path with a tiny threshold.
+fn replay(doc: &str, edits: &[(f64, f64, &str)], deferred: bool) -> Result<(), TestCaseError> {
+    let mut buf = RopeBuffer::from_text(doc);
+    let mut index = BlockIndex::parse(&buf);
+    if deferred {
+        index.set_offload_threshold(Some(8));
+    }
+    for &(at, len, text) in edits {
+        let edit = resolve(&EditSpec { at, len, text: text.into() }, &buf.text());
+        let applied = buf.apply(&edit);
+        index.on_edit(&applied, &buf);
+        if let Some(job) = index.take_parse_job(&buf) {
+            prop_assert!(index.finish_parse(job.run(), &buf));
+        }
+        check(&index, &buf)?;
+    }
+    Ok(())
+}
+
+/// CRLF plus a lazy blockquote continuation: a deferred reparse started
+/// after the touched HTML block instead of before it.
+#[test]
+fn regression_deferred_lazy_quote_crlf() {
+    let doc = "é===> quote| a | b |===more text| a | b |  \r\n</div>\n\n===>  \n\n\n\n\n- itempara\n    code```| a | b |## h2 {#id}## h2 {#id}\n- item## h2 {#id}- item\n## h2 {#id}\n| a | b |\n\npara[x]: /v \"t\"\n";
+    let edits = [
+        (0.9734472141394692, 0.0, "more textpara"),
+        (0.6991388199458342, 0.24733095121594173, "| a | b |"),
+        (0.58422769757525, 0.0, "para"),
+        (0.0, 0.03237789354992918, ""),
+        (0.44291995044244137, 0.0, "```rustpara"),
+        (0.8681122476827561, 0.0, "\n"),
+        (0.2525601165566407, 0.1751503036583719, ""),
+    ];
+    replay(doc, &edits, true).unwrap();
+}
+
+/// A tab-indented line after a footnote definition continues it; a window
+/// starting on that line parsed it as indented code.
+#[test]
+fn regression_footnote_continuation() {
+    replay("| a | b |\r\n[^1]: note\n\t[^1]: note\n# h", &[(1.0, 0.0, "")], false).unwrap();
+    replay("| a | b |\r\n[^1]: note\n\t[^1]: note\n# h", &[(0.9, 0.0, "")], false).unwrap();
+}
+
+/// Two blocks starting on one line, and a duplicate link definition that
+/// pulldown-cmark hid until the first one stopped being a definition.
+#[test]
+fn regression_shared_line_and_duplicate_definition() {
+    replay("[^1]:[^1]: note note\n\npara\n", &[(0.5, 0.0, "x"), (0.1, 0.0, "")], false).unwrap();
+    replay(">===\n\n\n\n[x]: /u\n# h\n    code\n[x]: /u  \n\n\n", &[(0.2066798255696416, 0.0, "para")], false).unwrap();
+    replay(">===\n\n\n\n[x]: /u\n# h\n    code\n[x]: /u  \n\n\n", &[(0.2066798255696416, 0.0, "para")], true).unwrap();
+}
+
+/// An indented line after a blank line still continues a footnote.
+#[test]
+fn regression_footnote_continuation_after_blank() {
+    let doc = "[^1]: note\n\n\t[^1]: note\n\nparapara</pre>para\n";
+    for at in [0.0, 0.3, 0.5, 0.6, 0.9, 1.0] {
+        replay(doc, &[(at, 0.0, "")], false).unwrap();
+        replay(doc, &[(at, 0.0, "x")], false).unwrap();
+    }
+}
+
+/// CRLF after an opening fence, with a deferred reparse.
+#[test]
+fn regression_fence_crlf_deferred() {
+    let doc = "  [Y]:\n/w```\r\n| a | b |- item\n| a | b |para- itempara\n\n- item| a | b |para- item| a | b |- item- item\npara| a | b |- item[x]: /v \"t\"\n\npara";
+    replay(doc, &[(0.0525, 0.189, "")], false).unwrap();
+    replay(doc, &[(0.0525, 0.189, "")], true).unwrap();
+}
