@@ -2,6 +2,7 @@
 
 mod app;
 mod command;
+mod context;
 mod keymap;
 mod palette;
 mod session;

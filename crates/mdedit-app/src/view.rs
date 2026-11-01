@@ -56,6 +56,9 @@ impl App {
         if let Some(i) = self.menu_open {
             layers.push(self.menu_dropdown(i));
         }
+        if let Some(at) = self.context_menu {
+            layers.push(self.context_menu_view(at));
+        }
         if self.palette.is_some() {
             layers.push(self.palette_view());
         }
@@ -88,16 +91,21 @@ impl App {
             .into()
     }
 
-    fn menu_dropdown(&self, index: usize) -> Element<'_, Message> {
+    /// The rows of a menu (menu bar dropdown or context menu).
+    fn menu_list(&self, items: &[Option<&'static str>]) -> Element<'_, Message> {
         let t = &self.theme;
-        let (_, items) = command::menus()[index];
         let mut list = column![].spacing(0);
         for item in items.iter() {
             match item {
                 None => list = list.push(container(hline(t)).padding(Padding::from([SPACE_1, 0.0]))),
                 Some(id) => {
                     let Some(entry) = command::find(id) else { continue };
-                    let shortcut = self.keymap.shortcut_for(id).map(|k| k.to_string()).unwrap_or_default();
+                    let shortcut = self
+                        .keymap
+                        .shortcut_for(id)
+                        .map(|k| k.to_string())
+                        .or_else(|| command::widget_shortcut(id).map(str::to_string))
+                        .unwrap_or_default();
                     let checked = self.menu_checked(id);
                     let label = row![
                         text(if checked { "✓" } else { "" }).size(UI).width(16),
@@ -111,17 +119,49 @@ impl App {
                             .height(MENU_ITEM_HEIGHT)
                             .padding(Padding::from([0.0, SPACE_2]))
                             .style(style::btn(t, Btn::MenuItem))
-                            .on_press(Message::Run(entry.id)),
+                            .on_press_maybe(self.menu_enabled(id).then_some(Message::Run(entry.id))),
                     );
                 }
             }
         }
+        container(list).width(MENU_WIDTH).padding(SPACE_1).style(style::popover(t, RADIUS_MD)).into()
+    }
+
+    /// Cut and copy need a selection; edits need a writable document.
+    fn menu_enabled(&self, id: &str) -> bool {
+        let Some(tab) = self.active_tab() else { return true };
+        match id {
+            "edit.cut" => !tab.selection().is_empty() && !tab.read_only(),
+            "edit.copy" => !tab.selection().is_empty(),
+            "edit.paste" | "edit.paste_table" => !tab.read_only(),
+            _ => true,
+        }
+    }
+
+    fn menu_dropdown(&self, index: usize) -> Element<'_, Message> {
+        let (_, items) = command::menus()[index];
+        let dropdown = self.menu_list(items);
         let x: f32 = SPACE_1 + command::menus()[..index].iter().map(|(l, _)| menu_title_width(l)).sum::<f32>();
-        let dropdown = container(list).width(MENU_WIDTH).padding(SPACE_1).style(style::popover(t, RADIUS_MD));
         let catcher = mouse_area(container(Space::new()).width(Length::Fill).height(Length::Fill))
             .on_press(Message::MenuOpen(None));
         stack![column![Space::new().height(MENU_BAR_HEIGHT), catcher], pin(opaque(dropdown)).x(x).y(MENU_BAR_HEIGHT),]
             .into()
+    }
+
+    /// Right-click menu at `at`, kept inside the window.
+    fn context_menu_view(&self, at: iced::Point) -> Element<'_, Message> {
+        let in_table = self.active_tab().is_some_and(|t| t.table.is_some());
+        let items = command::context_menu(in_table);
+        let rows = items.iter().filter(|i| i.is_some()).count() as f32;
+        let seps = items.len() as f32 - rows;
+        let height = rows * MENU_ITEM_HEIGHT + seps * (2.0 * SPACE_1 + 1.0) + 2.0 * SPACE_1 + 2.0;
+        let x = at.x.min(self.window_size.width - MENU_WIDTH - SPACE_1).max(0.0);
+        let y = if at.y + height > self.window_size.height { (at.y - height).max(0.0) } else { at.y };
+        let menu = self.menu_list(&items);
+        let catcher = mouse_area(container(Space::new()).width(Length::Fill).height(Length::Fill))
+            .on_press(Message::ContextMenu(None))
+            .on_right_press(Message::ContextMenu(None));
+        stack![catcher, pin(opaque(menu)).x(x).y(y)].into()
     }
 
     fn menu_checked(&self, id: &str) -> bool {
@@ -183,7 +223,8 @@ impl App {
         if let Some(b) = self.banner(tab) {
             col = col.push(container(b).padding(Padding::from([SPACE_2, SPACE_4])));
         }
-        col.push(self.document_body(tab)).width(Length::Fill).height(Length::Fill).into()
+        let body = crate::context::context_area(self.document_body(tab), |p| Message::ContextMenu(Some(p)));
+        col.push(body).width(Length::Fill).height(Length::Fill).into()
     }
 
     fn document_body<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {

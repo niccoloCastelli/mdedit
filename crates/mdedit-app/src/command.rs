@@ -28,6 +28,10 @@ pub enum AppCommand {
     Quit,
     Undo,
     Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
     Find,
     FindInFiles,
     ModeEdit,
@@ -92,6 +96,10 @@ app_commands! {
     Quit, "file.quit", "Quit", None, Some("Ctrl+Q");
     Undo, "edit.undo", "Undo", Some("undo"), Some("Ctrl+Z");
     Redo, "edit.redo", "Redo", Some("redo"), Some("Ctrl+Shift+Z");
+    Cut, "edit.cut", "Cut", Some("scissors"), None;
+    Copy, "edit.copy", "Copy", Some("copy"), None;
+    Paste, "edit.paste", "Paste", Some("clipboard-paste"), None;
+    SelectAll, "edit.select_all", "Select All", None, None;
     Find, "edit.find", "Find", Some("search"), Some("Ctrl+F");
     FindInFiles, "edit.find_in_files", "Find in Files", Some("search"), Some("Ctrl+Shift+F");
     ModeEdit, "view.mode_edit", "Edit Mode", Some("code"), Some("Ctrl+1");
@@ -125,6 +133,15 @@ app_commands! {
 /// the core registry (Tab itself is typed into the editor and handled by
 /// smart input).
 const EXTRA_SHORTCUTS: &[(&str, &str)] = &[("edit.outdent", "Shift+Tab")];
+
+/// Keys the document widgets handle themselves. They are not in the keymap
+/// (the widget would see them first) but menus still show them.
+const WIDGET_SHORTCUTS: &[(&str, &str)] =
+    &[("edit.cut", "Ctrl+X"), ("edit.copy", "Ctrl+C"), ("edit.paste", "Ctrl+V"), ("edit.select_all", "Ctrl+A")];
+
+pub fn widget_shortcut(id: &str) -> Option<&'static str> {
+    WIDGET_SHORTCUTS.iter().find(|(i, _)| *i == id).map(|(_, s)| *s)
+}
 
 /// Every command, UI commands first. Built once.
 pub fn all() -> &'static [CommandEntry] {
@@ -182,6 +199,11 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
             &[
                 Some("edit.undo"),
                 Some("edit.redo"),
+                None,
+                Some("edit.cut"),
+                Some("edit.copy"),
+                Some("edit.paste"),
+                Some("edit.select_all"),
                 None,
                 Some("edit.find"),
                 Some("edit.find_in_files"),
@@ -256,6 +278,32 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
     ]
 }
 
+/// The document's right-click menu. Table rows only appear inside a table.
+pub fn context_menu(in_table: bool) -> Vec<Option<&'static str>> {
+    let mut items = vec![
+        Some("edit.cut"),
+        Some("edit.copy"),
+        Some("edit.paste"),
+        Some("edit.paste_table"),
+        None,
+        Some("format.bold"),
+        Some("format.italic"),
+        Some("format.code"),
+        Some("format.link"),
+    ];
+    if in_table {
+        items.extend([
+            None,
+            Some("table.insert_row_below"),
+            Some("table.insert_column_right"),
+            Some("table.delete_row"),
+            Some("table.delete_column"),
+        ]);
+    }
+    items.extend([None, Some("edit.select_all")]);
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,7 +319,8 @@ mod tests {
 
     #[test]
     fn every_menu_item_exists() {
-        for (_, items) in menus() {
+        let context = context_menu(true);
+        for items in menus().iter().map(|(_, items)| *items).chain([context.as_slice()]) {
             for id in items.iter().flatten() {
                 assert!(find(id).is_some(), "menu references unknown command {id}");
             }
