@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fa82faa944923885fe4774be59cd5f125b8a49be9335a4b1d9f074e2b25bf1d8 # shrinks to doc = ['a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'], spans = [(10602628767727198989, 11)], edits = [FuzzEdit { at: 11486452121819827243, del: 3, text: "a" }]
+cc 691e43ddac0fe081b059d152d8b591f5f23e381b3a68cb153fd9240447a8f81e # shrinks to doc = ['a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'], spans = [(276684769477972676, 11)], edits = [FuzzEdit { at: 7357498213825771853, del: 0, text: "aaaa" }, FuzzEdit { at: 29282339482321608, del: 4, text: "" }, FuzzEdit { at: 467712760851411132, del: 2, text: "" }, FuzzEdit { at: 5030145690654434108, del: 3, text: "aaa" }, FuzzEdit { at: 8353033258851123494, del: 4, text: "a" }, FuzzEdit { at: 11694433336992507885, del: 3, text: "aaa" }, FuzzEdit { at: 9623217173759636412, del: 2, text: "" }]
