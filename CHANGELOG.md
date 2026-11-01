@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.1.1 (2026-11-01)
+
+Packaging fix release.
+
+### Fixes
+
+- **Markdown file icon on Linux:** the .deb now installs the file icon as
+  `mdedit-markdown` and its MIME definition points `text/markdown` at that
+  name. Before, it used `text-markdown`, which icon themes like Ubuntu's Yaru
+  already provide, so their icon hid ours and `.md` files kept the theme's
+  icon even though they opened with mdedit.
+
+### Known limitations
+
+- Same as v0.1.0. Also: installing mdedit replaces the markdown file icon for
+  every app on the system, since file icons belong to the MIME type, not to
+  the default application. File managers that are already running (Nautilus)
+  may need a restart to pick it up.
+
 ## v0.1.0 (2026-11-01)
 
 First release of mdedit, a fast, lightweight markdown editor written in Rust

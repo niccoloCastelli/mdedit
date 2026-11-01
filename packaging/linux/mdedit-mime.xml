@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Only needed where the system shared-mime-info predates text/markdown;
-     merging it with the system definition is harmless elsewhere. -->
+<!-- Defines text/markdown where the system shared-mime-info predates it and
+     sets mdedit's own file icon. The icon name is ours on purpose: icon
+     themes such as Yaru ship their own text-markdown, which would hide the
+     hicolor one. This file sorts after freedesktop.org.xml, so its <icon>
+     wins when update-mime-database merges them. -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="text/markdown">
     <comment>Markdown document</comment>
     <sub-class-of type="text/plain"/>
     <alias type="text/x-markdown"/>
-    <icon name="text-markdown"/>
+    <icon name="mdedit-markdown"/>
     <glob pattern="*.md"/>
     <glob pattern="*.markdown"/>
     <glob pattern="*.mkd"/>

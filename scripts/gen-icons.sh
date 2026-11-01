@@ -77,8 +77,8 @@ PY
 for s in "${sizes[@]}"; do
     mkdir -p "$hicolor/${s}x$s/apps" "$hicolor/${s}x$s/mimetypes"
     cp "$png/mdedit-$s.png" "$hicolor/${s}x$s/apps/mdedit.png"
-    cp "$png/mdedit-file-md-$s.png" "$hicolor/${s}x$s/mimetypes/text-markdown.png"
+    cp "$png/mdedit-file-md-$s.png" "$hicolor/${s}x$s/mimetypes/mdedit-markdown.png"
 done
 mkdir -p "$hicolor/scalable/apps" "$hicolor/scalable/mimetypes"
 cp "$icons/mdedit.svg" "$hicolor/scalable/apps/mdedit.svg"
-cp "$icons/mdedit-file-md.svg" "$hicolor/scalable/mimetypes/text-markdown.svg"
+cp "$icons/mdedit-file-md.svg" "$hicolor/scalable/mimetypes/mdedit-markdown.svg"
