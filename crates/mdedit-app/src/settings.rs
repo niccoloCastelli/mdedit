@@ -197,19 +197,12 @@ impl Settings {
         }
     }
 
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
-        write_atomic(path, text.as_bytes())
-    }
-
     /// Settings with only a few fields changed by the UI (appearance, zoom).
     /// Writes them into the existing file so the user's comments and layout
     /// elsewhere survive as far as `toml` allows.
     pub fn store_ui_change(&self, path: &Path) -> std::io::Result<()> {
-        let mut doc: toml::Table = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| toml::from_str(&t).ok())
-            .unwrap_or_default();
+        let mut doc: toml::Table =
+            std::fs::read_to_string(path).ok().and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
         let fresh: toml::Table = toml::Table::try_from(self).map_err(std::io::Error::other)?;
         for key in ["appearance", "editor"] {
             if let Some(v) = fresh.get(key) {

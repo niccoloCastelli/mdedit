@@ -63,7 +63,8 @@ pub struct CommandEntry {
     /// Stable id used in `keymap.toml`, e.g. `"file.save"`.
     pub id: &'static str,
     pub title: &'static str,
-    /// Lucide icon name.
+    /// Lucide icon name, for the floating toolbar and slash menu (later).
+    #[allow(dead_code)]
     pub icon: Option<&'static str>,
     /// Default shortcut in keymap syntax (`Ctrl` is Cmd on macOS).
     pub shortcut: Option<&'static str>,
@@ -123,7 +124,9 @@ app_commands! {
 /// Document commands and their ids, matching DESIGN_SYSTEM 8.2. Metadata
 /// from `mdedit_core::command::registry()` wins when it has the same id;
 /// these are the fallback until the commands workstream fills it in.
-fn doc_commands() -> Vec<(&'static str, &'static str, Option<&'static str>, Option<&'static str>, DocCommand)> {
+type DocEntry = (&'static str, &'static str, Option<&'static str>, Option<&'static str>, DocCommand);
+
+fn doc_commands() -> Vec<DocEntry> {
     use DocCommand::*;
     vec![
         ("format.bold", "Bold", Some("bold"), Some("Ctrl+B"), ToggleBold),
@@ -180,10 +183,6 @@ pub fn all() -> &'static [CommandEntry] {
 
 pub fn find(id: &str) -> Option<&'static CommandEntry> {
     all().iter().find(|c| c.id == id)
-}
-
-pub fn entry_for(cmd: AppCommand) -> &'static CommandEntry {
-    all().iter().find(|c| c.command == Command::App(cmd)).expect("every AppCommand is registered")
 }
 
 /// The menu bar layout (DESIGN_SYSTEM 6). `None` is a separator.

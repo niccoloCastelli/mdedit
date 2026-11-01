@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use mdedit_core::io::{self, IoError};
-use mdedit_core::{Document, Edit, EditOrigin, Selection, TxnId};
+use mdedit_core::document::SavePoint;
+use mdedit_core::io::{self, FileFormat};
+use mdedit_core::{Document, Edit, EditOrigin, Selection, TextBuffer};
 use mdedit_editor::EditorState;
 use mdedit_view::ViewState;
 
@@ -46,7 +47,8 @@ pub struct Tab {
     pub external: Option<External>,
     /// "Untitled-N" number for buffers without a path.
     pub untitled: usize,
-    next_txn: u64,
+    /// A background save is running (DESIGN_SYSTEM 8.6: never block typing).
+    pub saving: bool,
 }
 
 impl Tab {
@@ -63,13 +65,15 @@ impl Tab {
             disk,
             external: None,
             untitled,
-            next_txn: 1,
+            saving: false,
         }
     }
 
     pub fn title(&self) -> String {
         match &self.doc.path {
-            Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string()),
+            Some(p) => {
+                p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
+            }
             None => format!("Untitled-{}", self.untitled),
         }
     }
@@ -102,12 +106,6 @@ impl Tab {
         self.view.selection = sel;
     }
 
-    pub fn next_txn(&mut self) -> TxnId {
-        let t = TxnId(self.next_txn);
-        self.next_txn += 1;
-        t
-    }
-
     /// Apply an edit and move every cursor through it.
     pub fn apply(&mut self, edit: &Edit) {
         let applied = self.doc.apply(edit);
@@ -116,27 +114,56 @@ impl Tab {
         self.preview.selection = self.preview.selection.map(&applied);
     }
 
-    /// Save to the document's path, or `to` (save as).
+    /// Blocking save to the document's path, or `to` (save as).
+    #[cfg(test)]
     pub fn save(&mut self, to: Option<&Path>) -> Result<(), String> {
-        let target = to.map(Path::to_path_buf).or_else(|| self.doc.path.clone()).ok_or("no path to save to")?;
-        save_document(&mut self.doc, &target)?;
-        self.doc.path = Some(target.clone());
-        self.doc.mark_saved();
-        self.disk = DiskStamp::read(&target);
-        self.external = None;
+        let job = self.begin_save(to)?;
+        let path = job.path.clone();
+        let point = job.point;
+        job.run()?;
+        self.finish_save(path, point);
         Ok(())
     }
 
+    /// Snapshot the document for a background save.
+    pub fn begin_save(&mut self, to: Option<&Path>) -> Result<SaveJob, String> {
+        if self.doc.format.read_only {
+            return Err(io::IoError::ReadOnly.to_string());
+        }
+        let path = to.map(Path::to_path_buf).or_else(|| self.doc.path.clone()).ok_or("no path to save to")?;
+        let point = self.doc.begin_save();
+        self.saving = true;
+        Ok(SaveJob { path, point, snapshot: self.doc.buffer().snapshot(), format: self.doc.format })
+    }
+
+    /// The snapshot taken at `point` is on disk at `path`.
+    pub fn finish_save(&mut self, path: PathBuf, point: SavePoint) {
+        self.saving = false;
+        self.doc.mark_saved_at(point);
+        self.disk = DiskStamp::read(&path);
+        self.doc.path = Some(path);
+        self.external = None;
+    }
+
     /// Replace the buffer with what is on disk now, as one `External` edit,
-    /// so the edit log (anchors, caches) sees the reload.
+    /// so the edit log (anchors, caches) and undo see the reload.
     pub fn reload(&mut self, threshold: u64) -> Result<(), String> {
         let path = self.doc.path.clone().ok_or("untitled buffer")?;
         let fresh = io::load(&path, threshold).map_err(|e| e.to_string())?;
-        let text = fresh.buffer().text().into_owned();
+        let text = fresh.buffer().text();
         if text != self.doc.buffer().text() {
-            let txn = self.next_txn();
-            let edit = Edit { range: 0..self.doc.buffer().len_bytes(), text, origin: EditOrigin::External, txn };
-            self.apply(&edit);
+            // Mapping through a whole-document replace would push every
+            // cursor to the end; keep the offsets instead, clamped.
+            let keep = |s: Selection, len: usize| Selection { anchor: s.anchor.min(len), head: s.head.min(len) };
+            self.doc.replace_all(&text, EditOrigin::External);
+            let len = self.doc.buffer().len_bytes();
+            let fix = |s: Selection| {
+                let s = keep(s, len);
+                Selection { anchor: char_floor(&text, s.anchor), head: char_floor(&text, s.head) }
+            };
+            self.editor.selection = fix(self.editor.selection);
+            self.view.selection = fix(self.view.selection);
+            self.preview.selection = fix(self.preview.selection);
         }
         self.doc.format = fresh.format;
         self.doc.mark_saved();
@@ -146,24 +173,36 @@ impl Tab {
     }
 }
 
-/// `io::save`, with a plain atomic write while the core-buffer workstream's
-/// version is still the placeholder. The placeholder loader keeps BOM and
-/// CRLF in the text, so writing the text back is byte-identical.
-fn save_document(doc: &mut Document, path: &Path) -> Result<(), String> {
-    match io::save(doc, Some(path)) {
-        Ok(()) => Ok(()),
-        Err(IoError::Unimplemented(_)) => {
-            let text = doc.buffer().text().into_owned();
-            crate::settings::write_atomic(path, text.as_bytes()).map_err(|e| e.to_string())
-        }
-        Err(e) => Err(e.to_string()),
+fn char_floor(text: &str, mut i: usize) -> usize {
+    while !text.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// A save running on a worker.
+pub struct SaveJob {
+    pub path: PathBuf,
+    pub point: SavePoint,
+    snapshot: std::sync::Arc<dyn TextBuffer>,
+    format: FileFormat,
+}
+
+impl SaveJob {
+    pub fn run(&self) -> Result<(), String> {
+        io::write_atomic(&self.path, self.snapshot.as_ref(), self.format).map_err(|e| e.to_string())
     }
 }
 
 /// Moves a value that is not `Clone` through an iced message (which must
 /// be). The receiver takes it once.
-#[derive(Clone)]
 pub struct Handoff<T>(Arc<Mutex<Option<T>>>);
+
+impl<T> Clone for Handoff<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 impl<T> Handoff<T> {
     pub fn new(value: T) -> Self {
@@ -215,7 +254,7 @@ mod tests {
         std::fs::write(&path, "hello\n").unwrap();
         let mut tab = tab_for(&path);
         tab.set_selection(Selection::cursor(5));
-        let txn = tab.next_txn();
+        let txn = tab.doc.next_txn();
         tab.apply(&Edit::insert(5, " world", EditOrigin::User, txn));
         assert!(tab.is_dirty());
         assert_eq!(tab.editor.selection, Selection::cursor(11));
@@ -234,10 +273,13 @@ mod tests {
         std::fs::write(&path, "one\n").unwrap();
         let mut tab = tab_for(&path);
         std::fs::write(&path, "two lines\nnow\n").unwrap();
+        tab.set_selection(Selection::cursor(2));
         tab.reload(u64::MAX).unwrap();
         assert_eq!(tab.doc.buffer().text(), "two lines\nnow\n");
+        assert_eq!(tab.selection(), Selection::cursor(2));
         assert!(!tab.is_dirty());
-        assert_eq!(tab.doc.log().len(), 1);
+        tab.doc.undo();
+        assert_eq!(tab.doc.buffer().text(), "one\n");
     }
 
     #[test]
