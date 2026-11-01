@@ -9,10 +9,10 @@ use iced::{Alignment, Element, Font, Length, Padding};
 use mdedit_theme::space::*;
 use mdedit_theme::{ColorToken as T, Theme};
 
-use crate::app::EDITOR;
 use crate::app::{
     App, BannerAction, Dialog, DialogChoice, Message, PALETTE_INPUT, PaletteMsg, SEARCH_INPUT, SidebarTab,
 };
+use crate::app::{EDITOR, VIEW};
 use crate::command;
 use crate::palette::{self, Scope};
 use crate::settings::Mode;
@@ -195,7 +195,7 @@ impl App {
         };
         match tab.mode {
             Mode::Edit => edit(),
-            Mode::View => mdedit_view::view(&tab.doc, &tab.view, t, move |a| Message::View(id, a)),
+            Mode::View => mdedit_view::View::new(&tab.doc, &tab.view, t, move |a| Message::View(id, a)).id(VIEW).into(),
             Mode::Split => {
                 row![edit(), vline(t), mdedit_view::view(&tab.doc, &tab.preview, t, move |a| Message::View(id, a)),]
                     .into()
