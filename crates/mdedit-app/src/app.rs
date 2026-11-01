@@ -17,6 +17,7 @@ use mdedit_core::{Document, Edit, EditOrigin, Selection};
 use mdedit_theme::Theme;
 
 use crate::command::{self, AppCommand, Command};
+use crate::export_ui::{ExportMsg, ExportUi};
 use crate::keymap::{self, KeyChord, Keymap, Overrides};
 use crate::palette::{self, Palette, Scope};
 use crate::session::{Session, TabSession};
@@ -157,6 +158,7 @@ pub enum Message {
     /// Project mode and git (`project.rs`).
     Project(project::Msg),
     OpenFolder(PathBuf),
+    Export(ExportMsg),
 }
 
 /// Custom title bar actions (no OS decorations).
@@ -227,6 +229,7 @@ pub struct App {
     pub custom_title_bar: bool,
     pub palette: Option<Palette>,
     pub dialog: Option<Dialog>,
+    pub export: ExportUi,
     pub toasts: Vec<Toast>,
     pub session: Session,
     /// Session tabs still loading, in their saved order.
@@ -312,6 +315,7 @@ impl App {
             custom_title_bar,
             palette: None,
             dialog: None,
+            export: ExportUi::default(),
             toasts: Vec::new(),
             restoring: session.tabs.clone(),
             restore_active: session.tabs.get(session.active).map(|t| t.path.clone()),
@@ -514,6 +518,7 @@ impl App {
         if self.session_dirty {
             subs.push(iced::time::every(Duration::from_secs(2)).map(|_| Message::SessionTick));
         }
+        subs.extend(self.export.subscription());
         Subscription::batch(subs)
     }
 
@@ -543,7 +548,8 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let focus_key = |a: &Self| {
             let menu = a.menu_open.is_some() || a.context_menu.is_some() || a.toolbar.visible;
-            (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), a.dialog.is_some(), menu)
+            let dialog = a.modal_open();
+            (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), dialog, menu)
         };
         let before = focus_key(self);
         let jump = matches!(message, Message::OutlineJump(_) | Message::SearchJump(..));
@@ -755,6 +761,7 @@ impl App {
             Message::Banner(id, action) => self.on_banner(id, action),
             Message::FileChanged(path) => self.on_file_changed(&path),
             Message::Dialog(choice) => return self.on_dialog(choice),
+            Message::Export(msg) => return self.on_export(msg),
             Message::CloseRequested => return self.run_app(AppCommand::Quit),
             Message::SystemDark(dark) => {
                 self.system_dark = dark;
@@ -886,6 +893,9 @@ impl App {
     }
 
     fn on_key(&mut self, key: Key, modifiers: Modifiers, captured: bool) -> Task<Message> {
+        if let Some(task) = self.export_key(&key) {
+            return task;
+        }
         if key == Key::Named(Named::Escape) {
             if self.toolbar.visible {
                 self.toolbar.visible = false;
@@ -998,6 +1008,8 @@ impl App {
                     return self.save_as(id);
                 }
             }
+            ExportPdf => return self.on_export(ExportMsg::Open(mdedit_export::ExportFormat::Pdf)),
+            ExportDocx => return self.on_export(ExportMsg::Open(mdedit_export::ExportFormat::Docx)),
             SaveAll => {
                 let ids: Vec<TabId> =
                     self.tabs.iter().filter(|t| t.is_dirty() && t.doc.path.is_some()).map(|t| t.id).collect();
@@ -1587,6 +1599,7 @@ impl App {
     /// A dialog-like layer is open: the document takes no keys.
     pub fn modal_open(&self) -> bool {
         self.dialog.is_some()
+            || self.export.dialog.is_some()
             || self.prompt.is_some()
             || self.palette.is_some()
             || self.project.as_ref().is_some_and(|p| p.history.is_some())

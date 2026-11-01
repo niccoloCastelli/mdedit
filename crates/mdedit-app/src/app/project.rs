@@ -362,8 +362,12 @@ impl App {
             pending_switch: None,
         });
         self.session.last_dir = Some(root);
+        // Show the tree, unless the sidebar is already on the Git panel
+        // (a restored session).
+        if !(self.sidebar.visible && self.sidebar.tab == SidebarTab::Git) {
+            self.sidebar.tab = SidebarTab::Files;
+        }
         self.sidebar.visible = true;
-        self.sidebar.tab = SidebarTab::Files;
         self.session_dirty = true;
         tasks.push(self.refresh_git());
         if pull {
@@ -562,11 +566,11 @@ impl App {
                 need(&value, "checkpoint name")?;
                 let tag = (!value2.is_empty()).then_some(value2);
                 let label = if tag.is_some() { "Checkpoint and version tag saved." } else { "Checkpoint saved." };
-                let checkpoint = self.git_op("checkpoint", move |repo, me| {
+                let op = if then_sync { "sync" } else { "checkpoint" };
+                Ok(self.git_op(op, move |repo, me| {
                     repo.checkpoint(&value, tag.as_deref(), me)?;
-                    Ok(label.into())
-                });
-                Ok(if then_sync { checkpoint.chain(Task::done(Message::Project(Msg::Sync))) } else { checkpoint })
+                    if then_sync { sync_steps(repo) } else { Ok(label.into()) }
+                }))
             }
             PromptKind::NewBranch => {
                 need(&value, "branch name")?;
@@ -896,36 +900,7 @@ impl App {
         if g.status.pending_autocommits > 0 || !g.status.changed_files.is_empty() {
             return self.ask_checkpoint(true);
         }
-        self.git_op("sync", |repo, _| {
-            let remote = repo.remote_for_branch()?;
-            let pulled = match repo.pull_from(&remote) {
-                Ok(o) => o,
-                Err(GitError::RemoteNotFound(r)) => {
-                    return Err(GitError::Other(format!(
-                        "No remote named {r}. Add one with `git remote add {r} <url>` in the project folder."
-                    )));
-                }
-                Err(GitError::NeedsMerge) => {
-                    return Err(GitError::Other(
-                        "The remote and this copy both have new checkpoints. Merging is not supported yet; \
-                         sync with git outside mdedit."
-                            .into(),
-                    ));
-                }
-                Err(e) => return Err(e),
-            };
-            if !mdedit_git::push_available() {
-                return Ok(match pulled {
-                    PullOutcome::FastForwarded => "Pulled. Pushing is not available in this build.".into(),
-                    _ => "Up to date. Pushing is not available in this build.".into(),
-                });
-            }
-            repo.push(mdedit_git::push_backend().as_ref())?;
-            Ok(match pulled {
-                PullOutcome::FastForwarded => "Pulled and pushed.".into(),
-                _ => "Synced.".into(),
-            })
-        })
+        self.git_op("sync", |repo, _| sync_steps(repo))
     }
 
     fn switch_branch(&mut self, name: String) -> Task<Message> {
@@ -1133,6 +1108,38 @@ impl App {
         let w = self.project.as_ref()?.worker.as_ref()?;
         w.due_in().map(|d| d.as_secs_f32().ceil() as u64)
     }
+}
+
+/// Pull (fast-forward only), then push when this build can.
+fn sync_steps(repo: &Repo) -> mdedit_git::Result<String> {
+    let remote = repo.remote_for_branch()?;
+    let pulled = match repo.pull_from(&remote) {
+        Ok(o) => o,
+        Err(GitError::RemoteNotFound(r)) => {
+            return Err(GitError::Other(format!(
+                "No remote named {r}. Add one with `git remote add {r} <url>` in the project folder."
+            )));
+        }
+        Err(GitError::NeedsMerge) => {
+            return Err(GitError::Other(
+                "The remote and this copy both have new checkpoints. Merging is not supported yet; \
+                 sync with git outside mdedit."
+                    .into(),
+            ));
+        }
+        Err(e) => return Err(e),
+    };
+    if !mdedit_git::push_available() {
+        return Ok(match pulled {
+            PullOutcome::FastForwarded => "Pulled. Pushing is not available in this build.".into(),
+            _ => "Up to date. Pushing is not available in this build.".into(),
+        });
+    }
+    repo.push(mdedit_git::push_backend().as_ref())?;
+    Ok(match pulled {
+        PullOutcome::FastForwarded => "Pulled and pushed.".into(),
+        _ => "Synced.".into(),
+    })
 }
 
 /// Focus the dialog's first field with its text selected.

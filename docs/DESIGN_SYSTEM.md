@@ -423,3 +423,10 @@ table and can be overridden in a `keymap.toml`.
   180, so the Files/Outline/Search/Git switcher fits.
 - 2026-11-01: text selection has its own `selection` token, stronger than
   `accent-soft`, which was too faint on `bg`.
+- 2026-11-01: export (File → Export as PDF… Ctrl+Shift+E / DOCX…, also in
+  the palette) opens a 480 px dialog: template list (built-in, global,
+  project; a project template with a built-in's name replaces it), page
+  size segments, TOC / numbering / comments-as-footnotes checkboxes. While
+  it runs the status bar shows a sliding 48 px `accent` bar and the elapsed
+  time; the result is a toast with Open / Show in folder (or Details on
+  failure) that stays until dismissed, as toasts with actions do.
