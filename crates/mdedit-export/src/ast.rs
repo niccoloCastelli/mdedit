@@ -24,11 +24,21 @@ pub enum Inline {
     Emph(Vec<Inline>),
     Strong(Vec<Inline>),
     Strike(Vec<Inline>),
-    Link { url: String, content: Vec<Inline> },
-    Image { url: String, title: String, alt: String },
+    Link {
+        url: String,
+        content: Vec<Inline>,
+    },
+    Image {
+        url: String,
+        title: String,
+        alt: String,
+    },
     /// A reference to `Doc::footnotes[label]`.
     FootnoteRef(String),
-    Comment { author: String, body: String },
+    Comment {
+        author: String,
+        body: String,
+    },
     SoftBreak,
     HardBreak,
 }
@@ -51,17 +61,40 @@ pub struct ListItem {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     /// `level` is already shifted so the top heading level in the body is 1.
-    Heading { level: u8, content: Vec<Inline>, slug: String },
+    Heading {
+        level: u8,
+        content: Vec<Inline>,
+        slug: String,
+    },
     Paragraph(Vec<Inline>),
     /// A paragraph that holds a single image: rendered as a figure.
-    Figure { url: String, title: String, alt: String },
+    Figure {
+        url: String,
+        title: String,
+        alt: String,
+    },
     Quote(Vec<Block>),
     /// A blockquote that starts with `[!KIND]` (GitHub alerts) or with a
     /// line that is entirely bold (`> **Before you start**`).
-    Callout { kind: String, title: Vec<Inline>, body: Vec<Block> },
-    Code { lang: String, text: String },
-    List { start: Option<u64>, tight: bool, items: Vec<ListItem> },
-    Table { aligns: Vec<Align>, head: Vec<Vec<Inline>>, rows: Vec<Vec<Vec<Inline>>> },
+    Callout {
+        kind: String,
+        title: Vec<Inline>,
+        body: Vec<Block>,
+    },
+    Code {
+        lang: String,
+        text: String,
+    },
+    List {
+        start: Option<u64>,
+        tight: bool,
+        items: Vec<ListItem>,
+    },
+    Table {
+        aligns: Vec<Align>,
+        head: Vec<Vec<Inline>>,
+        rows: Vec<Vec<Vec<Inline>>>,
+    },
     Rule,
 }
 
@@ -495,7 +528,11 @@ fn callout(kind: Option<BlockQuoteKind>, mut blocks: Vec<Block>) -> Block {
         if first.is_empty() {
             blocks.remove(0);
         }
-        return Block::Callout { kind: name.to_lowercase(), title: vec![Inline::Text(name.to_uppercase())], body: blocks };
+        return Block::Callout {
+            kind: name.to_lowercase(),
+            title: vec![Inline::Text(name.to_uppercase())],
+            body: blocks,
+        };
     }
 
     // `> **Title**` on its own line.

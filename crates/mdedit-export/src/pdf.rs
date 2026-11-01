@@ -19,9 +19,7 @@ use crate::typst_markup::{CONF_PATH, MAIN_PATH, TEMPLATE_PATH, TypstFiles};
 
 fn bundled_fonts() -> &'static [Font] {
     static FONTS: OnceLock<Vec<Font>> = OnceLock::new();
-    FONTS.get_or_init(|| {
-        mdedit_theme::assets::fonts().flat_map(|bytes| Font::iter(Bytes::new(bytes))).collect()
-    })
+    FONTS.get_or_init(|| mdedit_theme::assets::fonts().flat_map(|bytes| Font::iter(Bytes::new(bytes))).collect())
 }
 
 fn library() -> &'static LazyHash<Library> {
@@ -61,7 +59,8 @@ impl ExportWorld {
         }
         let book = LazyHash::new(FontBook::from_fonts(&fonts));
         let mut sources = HashMap::new();
-        for (path, text) in [(CONF_PATH, &files.conf), (TEMPLATE_PATH, &template_typ.to_string()), (MAIN_PATH, &files.main)]
+        for (path, text) in
+            [(CONF_PATH, &files.conf), (TEMPLATE_PATH, &template_typ.to_string()), (MAIN_PATH, &files.main)]
         {
             let id = file_id(path);
             sources.insert(id, Source::new(id, text.clone()));

@@ -33,11 +33,8 @@ fn theme(name: &str) -> Option<Theme> {
 pub fn highlight(code: &str, lang: &str, theme_name: &str) -> Vec<Vec<Span>> {
     let plain = || code.lines().map(|l| vec![plain_span(l)]).collect();
     let ss = syntaxes();
-    let syntax = if lang.is_empty() {
-        None
-    } else {
-        ss.find_syntax_by_token(lang).or_else(|| ss.find_syntax_by_name(lang))
-    };
+    let syntax =
+        if lang.is_empty() { None } else { ss.find_syntax_by_token(lang).or_else(|| ss.find_syntax_by_name(lang)) };
     let (Some(syntax), Some(theme)) = (syntax, theme(theme_name)) else { return plain() };
     let default_fg = theme.settings.foreground;
     let mut hl = HighlightLines::new(syntax, &theme);

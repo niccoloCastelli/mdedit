@@ -29,7 +29,8 @@ pub struct TypstFiles {
 /// `None` when the image is not available (its alt text is shown instead).
 pub fn convert(doc: &Doc, s: &Settings, image: &mut dyn FnMut(&str) -> Option<String>) -> TypstFiles {
     let conf = conf(doc, s);
-    let mut w = Writer { out: String::new(), slugs: doc.slugs(), doc, s, image, footnotes_seen: HashSet::new(), code_end: 0 };
+    let mut w =
+        Writer { out: String::new(), slugs: doc.slugs(), doc, s, image, footnotes_seen: HashSet::new(), code_end: 0 };
     w.out.push_str(&format!("#import \"{TEMPLATE_PATH}\": *\n#show: md-document\n\n"));
     if let Some(title) = &doc.title {
         let mut blocks = doc.blocks.as_slice();
@@ -504,7 +505,10 @@ mod tests {
 
     #[test]
     fn placeholder_content() {
-        assert_eq!(placeholders("{title} p. {page}/{pages} {x}", "T*", "D"), "[T\\* p. #context counter(page).display()/#context counter(page).final().first() \\{x\\}]");
+        assert_eq!(
+            placeholders("{title} p. {page}/{pages} {x}", "T*", "D"),
+            "[T\\* p. #context counter(page).display()/#context counter(page).final().first() \\{x\\}]"
+        );
         assert_eq!(parts("a | b", "", ""), "([a], none, [b])");
         assert_eq!(parts("", "", ""), "(none, none, none)");
     }

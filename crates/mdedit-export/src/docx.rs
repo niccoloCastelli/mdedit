@@ -6,12 +6,12 @@
 use std::io::Cursor;
 
 use docx_rs::{
-    AbstractNumbering, AlignmentType, BorderType, BreakType, Docx, FieldCharType, Footer, Footnote, Header, Hyperlink, HyperlinkType,
-    IndentLevel, InstrText, Level, LevelJc, LevelOverride, LevelText, LineSpacing, LineSpacingType, NumPages, NumberFormat,
-    Numbering, NumberingId, PageMargin, PageNum, Paragraph, ParagraphBorder, ParagraphBorderPosition, ParagraphBorders, ParagraphChild,
-    Pic, Run, RunFonts, Shading, ShdType, SpecialIndentType, Start, Style, StyleType, Tab, TabValueType,
-    Table, TableBorder, TableBorderPosition, TableBorders, TableCell, TableCellMargins, TableRow,
-    VertAlignType, WidthType,
+    AbstractNumbering, AlignmentType, BorderType, BreakType, Docx, FieldCharType, Footer, Footnote, Header, Hyperlink,
+    HyperlinkType, IndentLevel, InstrText, Level, LevelJc, LevelOverride, LevelText, LineSpacing, LineSpacingType,
+    NumPages, NumberFormat, Numbering, NumberingId, PageMargin, PageNum, Paragraph, ParagraphBorder,
+    ParagraphBorderPosition, ParagraphBorders, ParagraphChild, Pic, Run, RunFonts, Shading, ShdType, SpecialIndentType,
+    Start, Style, StyleType, Tab, TabValueType, Table, TableBorder, TableBorderPosition, TableBorders, TableCell,
+    TableCellMargins, TableRow, VertAlignType, WidthType,
 };
 
 use crate::ast::{Align, Block, Doc, Inline, ListItem, plain_text};
@@ -141,9 +141,8 @@ fn build(doc: &Doc, s: &Settings, image: &mut ImageLoader) -> Docx {
     w.blocks(blocks, &Ctx::default());
 
     for (id, start) in std::mem::take(&mut w.numberings) {
-        docx = docx.add_numbering(
-            Numbering::new(id, DECIMAL).add_override(LevelOverride::new(0).start(start as usize)),
-        );
+        docx =
+            docx.add_numbering(Numbering::new(id, DECIMAL).add_override(LevelOverride::new(0).start(start as usize)));
     }
     for child in w.out {
         docx = match child {
@@ -154,6 +153,8 @@ fn build(doc: &Doc, s: &Settings, image: &mut ImageLoader) -> Docx {
     docx
 }
 
+// Short-lived: every child moves into the `Docx` right after writing.
+#[allow(clippy::large_enum_variant)]
 enum Child {
     P(Paragraph),
     T(Table),
@@ -203,9 +204,7 @@ impl Writer<'_> {
             _ if !t.heading_numbers => None,
             NumberStyle::Guide if level == 1 => Some(format!("{:02}", counters[0])),
             NumberStyle::Guide => None,
-            NumberStyle::Decimal => {
-                Some(counters[..level].iter().map(|c| c.to_string()).collect::<Vec<_>>().join("."))
-            }
+            NumberStyle::Decimal => Some(counters[..level].iter().map(|c| c.to_string()).collect::<Vec<_>>().join(".")),
         }
     }
 
@@ -656,9 +655,15 @@ fn bullet_numbering(t: &Template) -> AbstractNumbering {
     for level in 0..9 {
         let indent = LIST_INDENT * (level as i32 + 1);
         n = n.add_level(
-            Level::new(level, Start::new(1), NumberFormat::new("bullet"), LevelText::new("\u{2022}"), LevelJc::new("left"))
-                .indent(Some(indent), Some(SpecialIndentType::Hanging(LIST_INDENT)), None, None)
-                .color(muted.clone()),
+            Level::new(
+                level,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("\u{2022}"),
+                LevelJc::new("left"),
+            )
+            .indent(Some(indent), Some(SpecialIndentType::Hanging(LIST_INDENT)), None, None)
+            .color(muted.clone()),
         );
     }
     n
@@ -714,9 +719,11 @@ fn styles(t: &Template) -> Vec<Style> {
     let line = Some(t.line_height);
 
     let mut styles = vec![
-        para("Normal", "Normal").fonts(fonts(&t.font_body)).size(half_points(base, 1.0)).color(text.clone()).line_spacing(
-            spacing(0, after, line),
-        ),
+        para("Normal", "Normal")
+            .fonts(fonts(&t.font_body))
+            .size(half_points(base, 1.0))
+            .color(text.clone())
+            .line_spacing(spacing(0, after, line)),
         para("BodyText", "Body Text").based_on("Normal"),
         para("Compact", "Compact").based_on("Normal").line_spacing(spacing(0, (base * 0.3 * 20.0) as u32, line)),
         para("Title", "Title")
@@ -726,9 +733,11 @@ fn styles(t: &Template) -> Vec<Style> {
             .size(half_points(base, if t.title_page { 2.6 } else { 2.1 }))
             .bold()
             .line_spacing(spacing(if t.title_page { 2880 } else { 0 }, (base * 0.6 * 20.0) as u32, Some(1.1))),
-        para("Subtitle", "Subtitle").based_on("Normal").size(half_points(base, 1.2)).color(secondary.clone()).line_spacing(
-            spacing(0, (base * 1.4 * 20.0) as u32, Some(1.35)),
-        ),
+        para("Subtitle", "Subtitle")
+            .based_on("Normal")
+            .size(half_points(base, 1.2))
+            .color(secondary.clone())
+            .line_spacing(spacing(0, (base * 1.4 * 20.0) as u32, Some(1.35))),
         para("Eyebrow", "Eyebrow")
             .based_on("Normal")
             .size(half_points(base, 0.75))
@@ -760,9 +769,11 @@ fn styles(t: &Template) -> Vec<Style> {
             .color(secondary.clone())
             .line_spacing(spacing(0, 0, Some(1.25))),
         para("Figure", "Figure").based_on("Normal").align(AlignmentType::Center),
-        para("Caption", "Caption").based_on("Normal").size(half_points(base, 0.85)).color(muted.clone()).align(
-            AlignmentType::Center,
-        ),
+        para("Caption", "Caption")
+            .based_on("Normal")
+            .size(half_points(base, 0.85))
+            .color(muted.clone())
+            .align(AlignmentType::Center),
         para("TableText", "Table Text").based_on("Normal").line_spacing(spacing(0, 0, None)),
         para("TableHeading", "Table Heading")
             .based_on("TableText")
@@ -770,11 +781,10 @@ fn styles(t: &Template) -> Vec<Style> {
             .bold()
             .color(secondary.clone()),
         para("Rule", "Rule").based_on("Normal"),
-        para("FootnoteText", "footnote text").based_on("Normal").size(half_points(base, 0.85)).line_spacing(spacing(
-            0,
-            0,
-            None,
-        )),
+        para("FootnoteText", "footnote text")
+            .based_on("Normal")
+            .size(half_points(base, 0.85))
+            .line_spacing(spacing(0, 0, None)),
         para("HeaderFooter", "Header Footer").based_on("Normal").size(half_points(base, 0.8)).color(muted.clone()),
         para("TOCHeading", "TOC Heading")
             .based_on("Normal")
@@ -816,9 +826,9 @@ fn styles(t: &Template) -> Vec<Style> {
         let pp = std::mem::take(&mut style.paragraph_property);
         // `set_border` would start from all four default borders.
         let only = |positions: &[ParagraphBorderPosition], size, space| {
-            positions.iter().fold(ParagraphBorders::with_empty(), |b, pos| {
-                b.set(border(pos.clone(), size, space, &border_color))
-            })
+            positions
+                .iter()
+                .fold(ParagraphBorders::with_empty(), |b, pos| b.set(border(pos.clone(), size, space, &border_color)))
         };
         style.paragraph_property = match style.style_id.as_str() {
             "SectionNumber" => pp.set_borders(only(&[ParagraphBorderPosition::Top], 6, 18)),

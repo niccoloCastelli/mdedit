@@ -47,7 +47,20 @@ fn pretty_xml(xml: &str) -> String {
     let mut out = String::with_capacity(xml.len() + xml.len() / 8);
     for (i, _) in xml.match_indices('<') {
         let rest = &xml[i..];
-        let breaks = ["<w:p>", "<w:p ", "<w:tbl>", "<w:tr>", "<w:tc>", "<w:style ", "<w:footnote ", "<w:abstractNum ", "<w:num ", "<w:lvl ", "<w:sdt>", "<w:hyperlink "];
+        let breaks = [
+            "<w:p>",
+            "<w:p ",
+            "<w:tbl>",
+            "<w:tr>",
+            "<w:tc>",
+            "<w:style ",
+            "<w:footnote ",
+            "<w:abstractNum ",
+            "<w:num ",
+            "<w:lvl ",
+            "<w:sdt>",
+            "<w:hyperlink ",
+        ];
         if i > 0 && breaks.iter().any(|b| rest.starts_with(b)) {
             out.push('\n');
         }
@@ -83,7 +96,11 @@ fn golden_snapshots() {
             let t = template.name.to_lowercase();
             let opts = options(&markdown);
             let typ = typst_source(&markdown, &template, &opts).unwrap();
-            check(&format!("{case}.{t}.typ"), &format!("{}\n// ---- main.typ\n{}\n", typ.conf, typ.main), &mut failures);
+            check(
+                &format!("{case}.{t}.typ"),
+                &format!("{}\n// ---- main.typ\n{}\n", typ.conf, typ.main),
+                &mut failures,
+            );
             let parts = docx_parts(&markdown, &sample_dir(), &template, &opts).unwrap();
             let xml = format!(
                 "<!-- document.xml -->\n{}<!-- footnotes.xml -->\n{}<!-- numbering.xml -->\n{}<!-- styles.xml -->\n{}",
@@ -130,7 +147,8 @@ fn template_typ_overrides_the_builtin() {
 
 #[test]
 fn typst_errors_are_reported() {
-    let template = Template { typst_source: Some("#let md-document(body) = undefined-thing".into()), ..Template::default() };
+    let template =
+        Template { typst_source: Some("#let md-document(body) = undefined-thing".into()), ..Template::default() };
     let err = export("Hi", Path::new("."), &template, &ExportOptions::default(), ExportFormat::Pdf).unwrap_err();
     assert!(err.to_string().contains("undefined-thing") || err.to_string().contains("unknown variable"), "{err}");
 }
