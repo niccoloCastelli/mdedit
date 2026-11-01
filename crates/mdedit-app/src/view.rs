@@ -9,6 +9,7 @@ use iced::{Alignment, Element, Font, Length, Padding};
 use mdedit_theme::space::*;
 use mdedit_theme::{ColorToken as T, Theme};
 
+use crate::app::EDITOR;
 use crate::app::{
     App, BannerAction, Dialog, DialogChoice, Message, PALETTE_INPUT, PaletteMsg, SEARCH_INPUT, SidebarTab,
 };
@@ -196,7 +197,10 @@ impl App {
                 .height(Length::Fill)
                 .into()
         };
-        let edit = || column_of(mdedit_editor::editor(&tab.doc, &tab.editor, t, move |a| Message::Editor(id, a)));
+        // The editor applies the measure and side padding itself.
+        let edit = || -> Element<'a, Message> {
+            mdedit_editor::Editor::new(&tab.doc, &tab.editor, t, move |a| Message::Editor(id, a)).id(EDITOR).into()
+        };
         match tab.mode {
             Mode::Edit => edit(),
             Mode::View => column_of(mdedit_view::view(&tab.doc, &tab.view, t, move |a| Message::View(id, a))),

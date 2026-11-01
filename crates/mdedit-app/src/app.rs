@@ -192,6 +192,7 @@ pub struct SearchState {
 
 pub const PALETTE_INPUT: &str = "palette-input";
 pub const SEARCH_INPUT: &str = "sidebar-search";
+pub const EDITOR: &str = "editor";
 const MAX_SEARCH_RESULTS: usize = 500;
 
 impl App {
@@ -253,7 +254,10 @@ impl App {
             app.toast_error(w);
         }
 
-        let mut tasks = vec![iced::system::theme().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark))];
+        let mut tasks = vec![
+            iced::system::theme().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
+            iced::widget::operation::focus(EDITOR),
+        ];
         let threshold = app.settings.files.large_file_threshold();
         let mut to_open: Vec<PathBuf> = app.restoring.iter().map(|t| t.path.clone()).collect();
         let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -356,6 +360,7 @@ impl App {
         for tab in &mut self.tabs {
             tab.editor.line_numbers = e.line_numbers;
             tab.editor.monospace = e.monospace;
+            tab.editor.full_width = e.full_width;
         }
     }
 
@@ -365,6 +370,7 @@ impl App {
         let mut tab = Tab::new(self.next_id, doc, self.settings.editor.default_mode, self.next_untitled);
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
+        tab.editor.full_width = self.settings.editor.full_width;
         self.next_id += 1;
         self.next_untitled += 1;
         self.tabs.push(tab);
@@ -419,7 +425,18 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let focus_key = |a: &Self| (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), a.dialog.is_some());
+        let before = focus_key(self);
+        let jump = matches!(message, Message::OutlineJump(_) | Message::SearchJump(..));
         let task = self.handle(message);
+        // Give the keyboard back to the document when the tab, mode or a
+        // modal layer changes, and after jumping from the sidebar.
+        let after = focus_key(self);
+        let task = if (before != after || jump) && !after.1 && !after.2 {
+            Task::batch([task, iced::widget::operation::focus(EDITOR)])
+        } else {
+            task
+        };
         let derived = self.refresh_derived();
         // Cursor moves and layout changes reach session.toml within a few
         // seconds, so a crash or kill loses little.
@@ -794,6 +811,7 @@ impl App {
             }
             ToggleFullWidth => {
                 self.settings.editor.full_width = !self.settings.editor.full_width;
+                self.apply_editor_settings();
                 self.store_settings();
             }
             ToggleLineNumbers => {
@@ -889,6 +907,7 @@ impl App {
         self.next_id += 1;
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
+        tab.editor.full_width = self.settings.editor.full_width;
         if tab.doc.format.read_only {
             self.toast("Not valid UTF-8: opened read-only.");
         }

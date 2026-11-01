@@ -293,3 +293,48 @@ mod tests {
         assert_eq!(tab.editor.selection, Selection::cursor(6));
     }
 }
+
+/// M1 numbers on a 10 MB document, without a window (open and edit apply;
+/// first frame and widget time are measured in the running app).
+/// `cargo test --release -p mdedit-app -- --ignored --nocapture m1_`
+#[cfg(test)]
+mod perf {
+    use std::time::Instant;
+
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn m1_open_and_type_10mb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.md");
+        let mut text = String::new();
+        let mut i = 0;
+        while text.len() < 10 * 1024 * 1024 {
+            text.push_str(&format!(
+                "## Section {i}\n\nSome *prose* with a [link](http://x.y) and `code`, line {i}.\n\n- item\n- item\n\n"
+            ));
+            i += 1;
+        }
+        std::fs::write(&path, &text).unwrap();
+
+        let t = Instant::now();
+        let doc = io::load(&path, u64::MAX).unwrap();
+        let open = t.elapsed();
+        let mut tab = Tab::new(1, doc, Mode::Edit, 0);
+
+        let mut times = Vec::new();
+        let at = tab.doc.buffer().len_bytes() / 2;
+        for k in 0..200 {
+            let t = Instant::now();
+            tab.apply(&Edit::insert(at + k, "x", EditOrigin::User, mdedit_core::TxnId(0)));
+            times.push(t.elapsed());
+        }
+        times.sort();
+        let p99 = times[times.len() * 99 / 100];
+        let t = Instant::now();
+        tab.save(Some(&dir.path().join("copy.md"))).unwrap();
+        let save = t.elapsed();
+        eprintln!("10 MB: load {open:?}, apply p50 {:?} p99 {p99:?}, save {save:?}", times[times.len() / 2]);
+    }
+}
