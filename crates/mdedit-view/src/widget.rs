@@ -14,6 +14,7 @@ use iced::advanced::layout::{self as adv_layout, Layout};
 use iced::advanced::svg::{self as adv_svg, Renderer as _};
 use iced::advanced::text::Renderer as _;
 use iced::advanced::widget::tree::{self, Tree};
+use iced::advanced::widget::{self as adv_widget, operation};
 use iced::advanced::{Clipboard, Renderer as _, Shell, Widget, mouse, renderer};
 use iced::keyboard::{self, Key, Modifiers, key::Named};
 use iced::{Border, Color, Element, Event, Length, Point, Rectangle, Shadow, Size, Vector, window};
@@ -43,6 +44,7 @@ pub struct View<'a, Message> {
     state: &'a ViewState,
     look: Look,
     on_action: Box<dyn Fn(Action) -> Message + 'a>,
+    id: Option<adv_widget::Id>,
 }
 
 impl<'a, Message> View<'a, Message> {
@@ -52,7 +54,13 @@ impl<'a, Message> View<'a, Message> {
         theme: &'a Theme,
         on_action: impl Fn(Action) -> Message + 'a,
     ) -> Self {
-        Self { doc, state, look: Look::new(theme), on_action: Box::new(on_action) }
+        Self { doc, state, look: Look::new(theme), on_action: Box::new(on_action), id: None }
+    }
+
+    /// Widget id, for `iced::widget::operation::focus`.
+    pub fn id(mut self, id: impl Into<adv_widget::Id>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     fn editable(&self) -> bool {
@@ -198,6 +206,22 @@ impl State {
 
 /// The blocks the view shows: the index's, or one block covering the text
 /// when there is none (empty document).
+impl operation::Focusable for State {
+    fn is_focused(&self) -> bool {
+        self.focus.is_some()
+    }
+
+    fn focus(&mut self) {
+        let now = Instant::now();
+        self.focus = Some(Focus { updated_at: now, now, window_focused: true });
+    }
+
+    fn unfocus(&mut self) {
+        self.focus = None;
+        self.drag = None;
+    }
+}
+
 fn blocks_of(doc: &Document) -> Vec<Block> {
     let mut out: Vec<Block> = doc.blocks().map(|i| i.blocks().iter().collect()).unwrap_or_default();
     if out.is_empty() {
@@ -1461,6 +1485,17 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
         }
         if editable { mouse::Interaction::Text } else { mouse::Interaction::default() }
     }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _renderer: &iced::Renderer,
+        operation: &mut dyn adv_widget::Operation,
+    ) {
+        let st = tree.state.downcast_mut::<State>();
+        operation.focusable(self.id.as_ref(), layout.bounds(), st);
+    }
 }
 
 impl<'a, Message: 'a> From<View<'a, Message>> for Element<'a, Message> {
@@ -1523,5 +1558,16 @@ mod tests {
         let p = Point::new(st.col_x + rect.center_x(), v.y + rect.center_y());
         let actions = view.click_controls(&st, p, &mut iced::advanced::clipboard::Null).expect("handled");
         assert!(matches!(&actions[0], Action::Edit(e) if e.range == (7..10) && e.text == "[x]"), "{actions:?}");
+    }
+
+    #[test]
+    fn focus_operation_focuses_the_view() {
+        use operation::Focusable;
+        let mut st = State::default();
+        assert!(!st.is_focused());
+        st.focus();
+        assert!(st.is_focused());
+        st.unfocus();
+        assert!(!st.is_focused());
     }
 }
