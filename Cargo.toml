@@ -37,6 +37,7 @@ tokio = { version = "1", features = ["fs", "rt", "sync", "time"] }
 # CommonMark recognises), not the extra Unicode separators.
 ropey = { version = "1.6", default-features = false, features = ["simd", "cr_lines"] }
 pulldown-cmark = { version = "0.13", default-features = false }
+pulldown-cmark-escape = "0.11"
 memmap2 = "0.9"
 memchr = "2"
 regex = "1"
@@ -71,6 +72,7 @@ keyring = "4"
 # Export
 typst = "0.15"
 typst-pdf = "0.15"
+typst-layout = "0.15"
 typst-svg = "0.15"
 docx-rs = "0.4"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
