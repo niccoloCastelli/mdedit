@@ -11,4 +11,4 @@ Platform files for installers and bundles. Icons come from the two SVGs in
 | Windows | `crates/mdedit-app/build.rs` embeds `assets/icons/mdedit.ico` in `mdedit.exe` (winresource, Windows targets only). `assets/icons/mdedit-file-md.ico` is for the installer's `.md` association (`DefaultIcon`). |
 | macOS | `macos/Info.plist` stub for `mdedit.app`: `CFBundleIconFile` = `mdedit.icns`, `CFBundleDocumentTypes` for md/markdown with `mdedit-file-md.icns`; copy both from `assets/icons/` to `Contents/Resources/`. |
 
-Nothing here is installed by the build; the M5 release scripts will use it.
+`make deb` (cargo-deb, configured in `crates/mdedit-app/Cargo.toml`) packages the Linux files above with the release binary; dpkg triggers refresh the MIME, icon and desktop caches. The other platforms are not packaged yet.

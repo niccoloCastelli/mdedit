@@ -40,3 +40,27 @@ winresource.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 jiff.workspace = true
+
+# `make deb` (cargo-deb). Asset sources are relative to this crate; the
+# hicolor glob keeps its size/category folders under the target directory.
+# dpkg's triggers from shared-mime-info, hicolor-icon-theme and
+# desktop-file-utils refresh the caches, so no maintainer scripts.
+[package.metadata.deb]
+name = "mdedit"
+maintainer = "niccolo <nicco.castelli@gmail.com>"
+copyright = "2026, niccolo <nicco.castelli@gmail.com>"
+extended-description = """\
+A fast, lightweight markdown editor with Edit, Split, View (WYSIWYG) and \
+Read modes, large-file support, comments, git-backed projects and PDF/DOCX \
+export."""
+section = "editors"
+priority = "optional"
+depends = "$auto"
+# winit and wgpu dlopen these at run time, so $auto cannot see them.
+recommends = "libvulkan1, libxkbcommon-x11-0, libegl1"
+assets = [
+    ["target/release/mdedit", "usr/bin/", "755"],
+    ["../../packaging/linux/mdedit.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/mdedit-mime.xml", "usr/share/mime/packages/mdedit.xml", "644"],
+    ["../../packaging/linux/icons/hicolor/**/*", "usr/share/icons/hicolor/", "644"],
+]
