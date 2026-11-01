@@ -6,7 +6,7 @@
 //!
 //! Options:
 //! - `--split`: Edit-mode editor on the left, read-only preview on the
-//!   right, scroll-synced with `sync_anchor_estimate`
+//!   right, scroll-synced through the editor's `TopAnchor`
 //! - `--read-only`, `--dark`, `--full-width`
 //!
 //! Ctrl+Z and Ctrl+Shift+Z undo and redo through `Document::undo`/`redo`;
@@ -17,7 +17,7 @@ use iced::widget::{column, container, row, text};
 use iced::{Element, Length, Subscription, Task, clipboard};
 use mdedit_core::{Document, RopeBuffer};
 use mdedit_theme::{ColorToken, Theme};
-use mdedit_view::{Action, ViewState, sync_anchor_estimate};
+use mdedit_view::{Action, SyncAnchor, ViewState};
 
 struct App {
     doc: Document,
@@ -78,9 +78,9 @@ impl App {
                     self.doc.apply(&edit);
                 }
                 mdedit_editor::Action::Select(sel) => self.editor.selection = sel,
-                mdedit_editor::Action::Scroll(y) => {
-                    self.editor.scroll_y = y;
-                    self.state.sync = Some(sync_anchor_estimate(&self.doc, y, 27.0));
+                mdedit_editor::Action::Scroll(y) => self.editor.scroll_y = y,
+                mdedit_editor::Action::TopAnchor { byte, fraction } => {
+                    self.state.sync = Some(SyncAnchor { byte, fraction });
                 }
                 mdedit_editor::Action::Copy(t) => return clipboard::write(t),
                 mdedit_editor::Action::Paste => return clipboard::read().map(Message::Pasted),

@@ -18,11 +18,11 @@
 //! - [`Action::Scroll`] carries the scroll offset in px; store it in
 //!   [`ViewState::scroll_y`]. Setting `scroll_y` to anything else makes the
 //!   view jump there (session restore).
-//! - Split mode: set [`ViewState::sync`] to the editor's top visible source
-//!   position and the preview aligns the same block (plus the proportional
-//!   offset inside it) with its top edge. [`sync_anchor_estimate`] guesses
-//!   that position from the editor's scroll offset until the editor reports
-//!   it.
+//! - Split mode: set [`ViewState::sync`] from the editor's
+//!   `mdedit_editor::Action::TopAnchor { byte, fraction }` and the preview
+//!   aligns the same block (plus the proportional offset inside it) with its
+//!   top edge. [`sync_anchor_estimate`] guesses that position from a pixel
+//!   offset when no anchor is at hand.
 //! - Copy, cut and paste use the clipboard directly; undo, redo and other
 //!   shortcuts are not captured, so the app's keymap sees them.
 //! - Images resolve relative to `Document::path` and decode on worker
