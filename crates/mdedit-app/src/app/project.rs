@@ -111,6 +111,12 @@ pub enum Msg {
     DiffReady(PathBuf, String, Result<Vec<DiffLine>, String>),
     Restore,
     CloseHistory,
+    /// Images picked with Insert → Image, for this tab.
+    InsertImages(TabId, Vec<PathBuf>),
+    /// Ctrl+V: the clipboard's image as PNG, if it had one.
+    PastedImage(TabId, Result<Option<Vec<u8>>, String>),
+    /// A file dropped on the window.
+    Dropped(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -285,6 +291,9 @@ impl App {
                 }
             }
             Msg::Restore => return self.restore_version(),
+            Msg::InsertImages(id, paths) => return self.insert_images(id, paths),
+            Msg::PastedImage(id, r) => return self.on_pasted_image(id, r),
+            Msg::Dropped(path) => return self.on_dropped(path),
             Msg::CloseHistory => {
                 if let Some(p) = &mut self.project {
                     p.history = None;
