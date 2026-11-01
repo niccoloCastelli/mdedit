@@ -12,6 +12,8 @@ thiserror.workspace = true
 memmap2.workspace = true
 memchr.workspace = true
 regex-automata.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
