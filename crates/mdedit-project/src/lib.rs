@@ -19,7 +19,7 @@ mod fsutil;
 use std::path::{Path, PathBuf};
 
 pub use config::ProjectConfig;
-pub use moving::MoveReport;
+pub use moving::{FolderMoveReport, MoveReport};
 pub use tree::{FileTree, TreeEntry};
 pub use watch::{ProjectEvent, ProjectWatcher};
 
@@ -131,6 +131,12 @@ impl Project {
     /// links (SPEC 6.4). See [`moving::move_markdown`].
     pub fn move_markdown(&self, from: &Path, to: &Path) -> Result<MoveReport, ProjectError> {
         moving::move_markdown(&self.root, from, to, self.assets_dir())
+    }
+
+    /// Rename or move a folder, rewriting links that cross its edge. See
+    /// [`moving::move_folder`].
+    pub fn move_folder(&self, from: &Path, to: &Path) -> Result<FolderMoveReport, ProjectError> {
+        moving::move_folder(&self.root, from, to)
     }
 
     /// The lazy sidebar tree, with the root listed.

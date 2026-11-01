@@ -649,19 +649,26 @@ impl App {
         let p = self.project.as_ref().ok_or("No project is open.")?;
         if from.is_file() && is_md(from) {
             p.project.move_markdown(from, to).map_err(|e| e.to_string())?;
+        } else if from.is_dir() {
+            p.project.move_folder(from, to).map_err(|e| e.to_string())?;
         } else {
             if let Some(parent) = to.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             std::fs::rename(from, to).map_err(|e| e.to_string())?;
         }
+        let threshold = self.settings.files.large_file_threshold();
         for tab in &mut self.tabs {
             if let Some(old) = tab.doc.path.clone()
                 && let Ok(rest) = old.strip_prefix(from)
             {
                 let new = if rest.as_os_str().is_empty() { to.to_path_buf() } else { to.join(rest) };
-                tab.disk = DiskStamp::read(&new);
-                tab.doc.path = Some(new);
+                tab.doc.path = Some(new.clone());
+                // The move may have rewritten its links; the tab is clean, so
+                // take the new text (large files are never rewritten).
+                if tab.doc.mapped().is_some() || tab.reload(threshold).is_err() {
+                    tab.disk = DiskStamp::read(&new);
+                }
             }
         }
         if let Some(p) = &mut self.project {

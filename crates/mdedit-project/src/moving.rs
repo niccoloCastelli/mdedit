@@ -4,6 +4,10 @@
 //!
 //! The app saves the file before calling this and reloads it (and every file
 //! in [`MoveReport::updated_files`]) afterwards.
+//!
+//! [`move_folder`] does the same for a whole folder: everything in it moves
+//! together, and links that cross the folder's edge are rewritten on both
+//! sides.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -76,7 +80,11 @@ fn new_link(dir: &Path, r: &Resolved, target: &Path) -> Option<String> {
         return None;
     }
     let rel = relative(dir, target).unwrap_or_else(|| target.to_string_lossy().replace('\\', "/"));
-    Some(format!("{}{}", encode_dest(&rel, r.dest.angle), r.suffix))
+    let mut dest = encode_dest(&rel, r.dest.angle);
+    if r.dest.html {
+        dest = dest.replace('&', "%26").replace('"', "%22").replace('\'', "%27");
+    }
+    Some(format!("{dest}{}", r.suffix))
 }
 
 /// Markdown files under `root`, skipping hidden folders (`.git`, `.mdedit`)
@@ -257,6 +265,81 @@ pub fn move_markdown(root: &Path, from: &Path, to: &Path, assets_dir: &str) -> R
     Ok(report)
 }
 
+/// What [`move_folder`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FolderMoveReport {
+    /// Where the folder ended up (an existing directory `to` gets the folder
+    /// name appended).
+    pub to: PathBuf,
+    /// Link destinations rewritten, in all files.
+    pub links_rewritten: usize,
+    /// Markdown files whose links were rewritten, at their paths after the
+    /// move (files inside the folder included).
+    pub updated_files: Vec<PathBuf>,
+}
+
+/// Rename or move the folder `from` to `to` (a new path, or an existing
+/// directory to move into) within the project at `root`. Its files,
+/// assets and sidecars move together, so links between them stay as they
+/// are; links from inside to outside the folder and from outside into it
+/// are rewritten.
+///
+/// Fails without changing anything if `to` exists, is inside `from`, or
+/// `from` is the project root.
+pub fn move_folder(root: &Path, from: &Path, to: &Path) -> Result<FolderMoveReport, ProjectError> {
+    let root = absolute(root)?;
+    let from = absolute(from)?;
+    let mut to = absolute(to)?;
+    if !from.is_dir() {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, from.display().to_string()).into());
+    }
+    if to.is_dir() && !fsutil::same_file(&from, &to) {
+        to = to.join(from.file_name().ok_or_else(|| ProjectError::InvalidPath(from.display().to_string()))?);
+    }
+    let mut report = FolderMoveReport { to: to.clone(), ..FolderMoveReport::default() };
+    if from == to {
+        return Ok(report);
+    }
+    if from == root || to.starts_with(&from) {
+        return Err(ProjectError::InvalidPath(format!("cannot move {} into {}", from.display(), to.display())));
+    }
+    if to.exists() && !fsutil::same_file(&from, &to) {
+        return Err(ProjectError::AlreadyExists(to));
+    }
+
+    let moved = |p: &Path| match p.strip_prefix(&from) {
+        Ok(rest) if rest.as_os_str().is_empty() => to.clone(),
+        Ok(rest) => to.join(rest),
+        Err(_) => p.to_path_buf(),
+    };
+    // Plan every rewrite before touching the disk.
+    let mut rewrites = Vec::new();
+    for path in markdown_files(&root) {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Some(old_dir) = path.parent() else { continue };
+        let new_path = moved(&path);
+        let new_dir = new_path.parent().unwrap_or(Path::new(""));
+        let edits: Vec<_> = resolve_all(&text, old_dir)
+            .iter()
+            .filter_map(|r| new_link(new_dir, r, &moved(&r.target)).map(|l| (r.dest.range.clone(), l)))
+            .collect();
+        if !edits.is_empty() {
+            rewrites.push((new_path, text, edits));
+        }
+    }
+
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(&from, &to)?;
+    for (path, text, edits) in rewrites {
+        report.links_rewritten += edits.len();
+        fsutil::write_atomic(&path, apply_edits(&text, edits).as_bytes())?;
+        report.updated_files.push(path);
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +371,90 @@ mod tests {
         fn mv(&self, from: &str, to: &str) -> Result<MoveReport, ProjectError> {
             move_markdown(&self.root, &self.p(from), &self.p(to), "assets")
         }
+        fn mv_dir(&self, from: &str, to: &str) -> Result<FolderMoveReport, ProjectError> {
+            move_folder(&self.root, &self.p(from), &self.p(to))
+        }
+    }
+
+    #[test]
+    fn html_img_tags_follow_moves() {
+        let f = Fixture::new();
+        f.write(
+            "a.md",
+            "<p align=\"center\"><img src=\"assets/x.png\" width=\"80\"></p>\n\nText <img src='assets/y.png'>\n",
+        );
+        f.write("assets/x.png", "X");
+        f.write("assets/y.png", "Y");
+        let r = f.mv("a.md", "ch/a.md").unwrap();
+        assert_eq!(r.moved_assets.len(), 2);
+        assert_eq!(
+            f.read("ch/a.md"),
+            "<p align=\"center\"><img src=\"assets/x.png\" width=\"80\"></p>\n\nText <img src='assets/y.png'>\n"
+        );
+        assert_eq!(f.read("ch/assets/x.png"), "X");
+
+        // An image shared through HTML is copied, and HTML links into a moved file's folder are rewritten.
+        f.write("b.md", "<img src=\"ch/assets/x.png\">\n");
+        f.write("c.md", "![x](ch/assets/x.png)\n<img src=\"../outside.png\">\n");
+        let r = f.mv("c.md", "deep/er/c.md").unwrap();
+        assert_eq!(f.read("deep/er/c.md"), "![x](../../ch/assets/x.png)\n<img src=\"../../../outside.png\">\n");
+        assert!(r.moved_assets.is_empty());
+    }
+
+    #[test]
+    fn folder_move_rewrites_links_across_its_edge() {
+        let f = Fixture::new();
+        f.write("index.md", "[A](notes/a.md#s) [B](<notes/sub/b.md>) <img src=\"notes/assets/p.png\"> [o](other.md)\n");
+        f.write("other.md", "");
+        f.write("notes/a.md", "[b](sub/b.md) ![p](assets/p.png) [up](../other.md) [i](../index.md)\n");
+        f.write("notes/.a.md.toml", "version = 1\n");
+        f.write("notes/sub/b.md", "[a](../a.md) <img src=\"../../top.png\">\n");
+        f.write("notes/assets/p.png", "P");
+        f.write("top.png", "T");
+
+        let r = f.mv_dir("notes", "archive/2026 notes").unwrap();
+        assert_eq!(r.to, f.p("archive/2026 notes"));
+        assert!(!f.p("notes").exists());
+        assert_eq!(f.read("archive/2026 notes/.a.md.toml"), "version = 1\n");
+        assert_eq!(f.read("archive/2026 notes/assets/p.png"), "P");
+        assert_eq!(
+            f.read("index.md"),
+            "[A](archive/2026%20notes/a.md#s) [B](<archive/2026 notes/sub/b.md>) \
+             <img src=\"archive/2026%20notes/assets/p.png\"> [o](other.md)\n"
+        );
+        // Links inside the folder stay, links out of it gain a level.
+        assert_eq!(
+            f.read("archive/2026 notes/a.md"),
+            "[b](sub/b.md) ![p](assets/p.png) [up](../../other.md) [i](../../index.md)\n"
+        );
+        assert_eq!(f.read("archive/2026 notes/sub/b.md"), "[a](../a.md) <img src=\"../../../top.png\">\n");
+        let mut updated = r.updated_files.clone();
+        updated.sort();
+        assert_eq!(updated, [f.p("archive/2026 notes/a.md"), f.p("archive/2026 notes/sub/b.md"), f.p("index.md")]);
+        assert_eq!(r.links_rewritten, 6);
+    }
+
+    #[test]
+    fn folder_rename_in_place_and_refusals() {
+        let f = Fixture::new();
+        f.write("docs/a.md", "[b](b.md) [r](../readme.md)\n");
+        f.write("docs/b.md", "");
+        f.write("readme.md", "[a](docs/a.md)\n");
+        let r = f.mv_dir("docs", "guide").unwrap();
+        assert_eq!(f.read("guide/a.md"), "[b](b.md) [r](../readme.md)\n");
+        assert_eq!(f.read("readme.md"), "[a](guide/a.md)\n");
+        assert_eq!(r.updated_files, [f.p("readme.md")]);
+
+        // Into an existing folder keeps the name.
+        std::fs::create_dir_all(f.p("old")).unwrap();
+        assert_eq!(f.mv_dir("guide", "old").unwrap().to, f.p("old/guide"));
+        assert_eq!(f.read("readme.md"), "[a](old/guide/a.md)\n");
+
+        f.write("y/guide/z.md", "");
+        assert!(matches!(f.mv_dir("old/guide", "old/guide/inner"), Err(ProjectError::InvalidPath(_))));
+        assert!(matches!(f.mv_dir("old/guide", "y"), Err(ProjectError::AlreadyExists(_))));
+        assert!(matches!(f.mv_dir(".", "z"), Err(ProjectError::InvalidPath(_))));
+        assert_eq!(f.read("readme.md"), "[a](old/guide/a.md)\n");
     }
 
     #[test]
