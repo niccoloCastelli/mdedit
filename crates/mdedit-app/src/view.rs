@@ -291,8 +291,8 @@ impl App {
         match id {
             "view.mode_edit" => mode == Some(Mode::Edit),
             "view.mode_split" => mode == Some(Mode::Split),
-            "view.mode_view" => mode == Some(Mode::View),
-            "view.toggle_view_only" => self.active_tab().is_some_and(|t| t.mode == Mode::View && t.view.read_only),
+            "view.mode_view" => self.active_tab().is_some_and(|t| t.mode == Mode::View && !t.view.read_only),
+            "view.mode_read" => self.active_tab().is_some_and(|t| t.mode == Mode::View && t.view.read_only),
             "view.toggle_sidebar" => self.sidebar.visible,
             "view.toggle_comments" => self.comments_visible,
             "view.toggle_full_width" => self.settings.editor.full_width,
@@ -613,38 +613,30 @@ impl App {
                 right = right.push(text(format!("{:.0}%", zoom * 100.0)).size(UI_SMALL).color(muted));
             }
             let mut modes = row![].spacing(2);
-            for m in [Mode::Edit, Mode::Split, Mode::View] {
-                let on = tab.mode == m;
-                let enabled = m == Mode::Edit || !tab.doc.is_large();
-                let b = button(text(m.label()).size(UI_SMALL).height(Length::Fill).align_y(Alignment::Center))
+            // Four fixed segments; Read is View without editing.
+            let read = tab.mode == Mode::View && tab.view.read_only;
+            let segments = [
+                ("Edit", "view.mode_edit", tab.mode == Mode::Edit, "Edit mode", Message::SetMode(Mode::Edit)),
+                ("Split", "view.mode_split", tab.mode == Mode::Split, "Split mode", Message::SetMode(Mode::Split)),
+                ("View", "view.mode_view", tab.mode == Mode::View && !read, "View mode", Message::SetMode(Mode::View)),
+                ("Read", "view.mode_read", read, "Read mode: select and copy, no editing", Message::SetRead),
+            ];
+            for (label, id, on, tip, msg) in segments {
+                let enabled = id == "view.mode_edit" || !tab.doc.is_large();
+                let b = button(text(label).size(UI_SMALL).height(Length::Fill).align_y(Alignment::Center))
                     .padding(Padding::from([0.0, SPACE_2]))
                     .height(STATUS_BAR_HEIGHT - 4.0)
                     .style(style::btn(t, if on { Btn::Toggled } else { Btn::Ghost }))
-                    .on_press_maybe(enabled.then_some(Message::SetMode(m)));
+                    .on_press_maybe(enabled.then_some(msg));
                 let tip = if enabled {
-                    let id = match m {
-                        Mode::Edit => "view.mode_edit",
-                        Mode::Split => "view.mode_split",
-                        Mode::View => "view.mode_view",
-                    };
                     let key = self.keymap.shortcut_for(id).map(|k| format!(" ({k})")).unwrap_or_default();
-                    format!("{} mode{key}", m.label())
+                    format!("{tip}{key}")
                 } else {
                     "Large files open in Edit mode only".into()
                 };
                 modes = modes.push(with_tooltip(t, b, &tip));
             }
             right = right.push(modes);
-            if tab.mode == Mode::View && !tab.read_only() {
-                let on = tab.view.read_only;
-                let label = if on { "Read only" } else { "Editing" };
-                let b = button(text(label).size(UI_SMALL).height(Length::Fill).align_y(Alignment::Center))
-                    .padding(Padding::from([0.0, SPACE_2]))
-                    .height(STATUS_BAR_HEIGHT - 4.0)
-                    .style(style::btn(t, if on { Btn::Toggled } else { Btn::Ghost }))
-                    .on_press(Message::Run("view.toggle_view_only"));
-                right = right.push(with_tooltip(t, b, "View only: read without editing"));
-            }
         }
         container(
             row![left, Space::new().width(Length::Fill), right]

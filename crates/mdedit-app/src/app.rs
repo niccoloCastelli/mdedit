@@ -127,6 +127,8 @@ pub enum Message {
     Paste(TabId, Option<String>),
     PasteTable(TabId, Option<String>),
     SetMode(Mode),
+    /// Read mode from the status bar (the command toggles; this doesn't).
+    SetRead,
     Sidebar(SidebarTab),
     /// Sidebar separator dragged to this window x.
     SidebarDrag(f32),
@@ -694,6 +696,7 @@ impl App {
                 }
             }
             Message::SetMode(mode) => self.set_mode(mode),
+            Message::SetRead => self.set_read(true),
             Message::Sidebar(t) => {
                 if self.sidebar.visible && self.sidebar.tab == t {
                     self.sidebar.visible = false;
@@ -1040,23 +1043,20 @@ impl App {
             ModeSplit => self.set_mode(Mode::Split),
             ModeView => self.set_mode(Mode::View),
             CycleMode => {
-                if let Some(m) = self.active_tab().map(|t| t.mode.next()) {
-                    let m = if self.active_tab().is_some_and(|t| t.doc.is_large()) { Mode::Edit } else { m };
+                // Edit, Split, View, Read, then back to Edit.
+                let Some(tab) = self.active_tab() else { return Task::none() };
+                if tab.mode == Mode::View && !tab.view.read_only && !tab.read_only() {
+                    self.set_read(true);
+                } else {
+                    let m = if tab.doc.is_large() { Mode::Edit } else { tab.mode.next() };
                     self.set_mode(m);
                 }
             }
             ToggleSidebar => self.sidebar.visible = !self.sidebar.visible,
-            ToggleViewOnly => {
-                let Some(tab) = self.active_tab() else { return Task::none() };
-                let on = !(tab.mode == Mode::View && tab.view.read_only);
-                if tab.mode != Mode::View {
-                    self.set_mode(Mode::View);
-                }
-                if let Some(tab) = self.active_tab_mut()
-                    && tab.mode == Mode::View
-                {
-                    tab.view.read_only = on;
-                }
+            ModeRead => {
+                // From Read, the shortcut goes back to (editable) View.
+                let on = !self.active_tab().is_some_and(|t| t.mode == Mode::View && t.view.read_only);
+                self.set_read(on);
             }
             ToggleComments => self.comments_visible = !self.comments_visible,
             ShowFiles => return self.show_sidebar(SidebarTab::Files),
@@ -1117,6 +1117,7 @@ impl App {
         Task::none()
     }
 
+    /// Edit, Split or View; View is the editable one (Read is `set_read`).
     fn set_mode(&mut self, mode: Mode) {
         if let Some(tab) = self.active_tab_mut() {
             if tab.doc.is_large() && mode != Mode::Edit {
@@ -1124,6 +1125,17 @@ impl App {
                 return;
             }
             tab.set_mode(mode);
+            tab.view.read_only = false;
+        }
+    }
+
+    /// Read mode: View without editing (`on`), or back to editable View.
+    fn set_read(&mut self, on: bool) {
+        self.set_mode(Mode::View);
+        if let Some(tab) = self.active_tab_mut()
+            && tab.mode == Mode::View
+        {
+            tab.view.read_only = on;
         }
     }
 

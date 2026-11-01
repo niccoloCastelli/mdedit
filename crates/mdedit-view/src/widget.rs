@@ -960,9 +960,7 @@ impl<'a, Message> View<'a, Message> {
                     shell.request_redraw();
                     return true;
                 }
-                if !editable {
-                    return true;
-                }
+                // Read-only text still selects (and copies); it just shows no caret.
                 let Some(at) = self.hit(st, pos) else { return true };
                 let count = match st.clicks {
                     Some((t, p, n)) if now - t < Duration::from_millis(400) && p.distance(pos) < 4.0 => n % 3 + 1,
@@ -1025,7 +1023,7 @@ impl<'a, Message> View<'a, Message> {
                 false
             }
             Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, text, .. }) => {
-                if st.focus.is_none() || !editable {
+                if st.focus.is_none() || !editable && !read_only_key(key, *modifiers) {
                     return false;
                 }
                 if st.pending_edit {
@@ -1540,6 +1538,13 @@ impl<'a, Message: 'a> From<View<'a, Message>> for Element<'a, Message> {
     fn from(view: View<'a, Message>) -> Self {
         Element::new(view)
     }
+}
+
+/// Keys a read-only view still handles: copy and select all.
+fn read_only_key(key: &Key, modifiers: keyboard::Modifiers) -> bool {
+    modifiers.command()
+        && !modifiers.alt()
+        && matches!(key.as_ref(), Key::Character(c) if c.eq_ignore_ascii_case("c") || c.eq_ignore_ascii_case("a"))
 }
 
 #[cfg(test)]

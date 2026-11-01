@@ -326,8 +326,10 @@ new colour.
 | **Edit** | Markdown source with syntax styling (2.4), line numbers optional | Ctrl+1 |
 | **Split** | Source left, rendered preview right, synced scroll, preview read-only | Ctrl+2 |
 | **View** | WYSIWYG: the document is rendered and editable. The block containing the cursor reveals its markdown markers (Typora's model), all other blocks stay rendered | Ctrl+3 |
+| **Read** | View without editing: no caret, no formatting toolbar, but text can still be selected and copied (and, later, commented). Ctrl+4 again returns to View | Ctrl+4 |
 
-Ctrl+E cycles modes. The cursor position and selection are preserved across
+The status bar shows the four modes as one fixed segmented control; nothing
+appears or disappears with the mode. Ctrl+E cycles Edit, Split, View, Read. The cursor position and selection are preserved across
 mode switches (mapped through the block index). Large files (above the
 threshold) only allow Edit mode; the other options are disabled with a tooltip
 explaining why.
