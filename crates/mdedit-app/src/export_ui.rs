@@ -542,6 +542,9 @@ impl App {
                         text(choice.label()).size(UI).width(Length::Fill),
                         text(origin).size(UI_SMALL).color(c(t, T::TextMuted)),
                     ]
+                    // The button has no vertical padding: fill its height
+                    // so the text centres in the row.
+                    .height(Length::Fill)
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
