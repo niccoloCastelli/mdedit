@@ -632,9 +632,7 @@ impl App {
 }
 
 fn set_highlights(tab: &mut Tab, h: Vec<Highlight>) {
-    tab.view.highlights = h.clone();
-    tab.preview.highlights = h.clone();
-    tab.editor.highlights = h;
+    tab.set_highlights(Some(h), None);
 }
 
 /// Whitespace at either end of a selection is not part of the comment.

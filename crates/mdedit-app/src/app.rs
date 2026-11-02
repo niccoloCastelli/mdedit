@@ -19,6 +19,7 @@ use mdedit_theme::Theme;
 use crate::command::{self, AppCommand, Command};
 use crate::comments::{CommentMsg, CommentsUi};
 use crate::export_ui::{ExportMsg, ExportUi};
+use crate::find::{FindMsg, FindUi};
 use crate::keymap::{self, KeyChord, Keymap, Overrides};
 use crate::palette::{self, Palette, Scope};
 use crate::session::{Session, TabSession};
@@ -111,6 +112,7 @@ pub enum Message {
         modifiers: Modifiers,
         captured: bool,
     },
+    Modifiers(Modifiers),
     MenuOpen(Option<usize>),
     /// Right-click menu at a window position; `None` closes it.
     ContextMenu(Option<Point>),
@@ -162,6 +164,7 @@ pub enum Message {
     Project(project::Msg),
     OpenFolder(PathBuf),
     Export(ExportMsg),
+    Find(FindMsg),
     Comments(CommentMsg),
     Slash(SlashMsg),
 }
@@ -235,6 +238,7 @@ pub struct App {
     pub palette: Option<Palette>,
     pub dialog: Option<Dialog>,
     pub export: ExportUi,
+    pub find: FindUi,
     pub comments: CommentsUi,
     pub slash: SlashState,
     pub toasts: Vec<Toast>,
@@ -324,6 +328,7 @@ impl App {
             palette: None,
             dialog: None,
             export: ExportUi::default(),
+            find: FindUi::default(),
             comments: CommentsUi::default(),
             slash: SlashState::default(),
             toasts: Vec::new(),
@@ -516,6 +521,7 @@ impl App {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Message::Key { key, modifiers, captured: status == event::Status::Captured })
                 }
+                Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => Some(Message::Modifiers(m)),
                 Event::Window(window::Event::FileDropped(path)) => Some(Message::Project(project::Msg::Dropped(path))),
                 _ => None,
             }),
@@ -578,22 +584,36 @@ impl App {
         let jump = matches!(message, Message::OutlineJump(_) | Message::SearchJump(..));
         let is_edit = matches!(message, Message::Editor(_, mdedit_editor::Action::Edit(_)) | Message::TraceType);
         let started = Instant::now();
+        if matches!(
+            message,
+            Message::Editor(
+                _,
+                mdedit_editor::Action::Edit(_) | mdedit_editor::Action::Select(_) | mdedit_editor::Action::Paste
+            ) | Message::View(_, mdedit_view::Action::Edit(_) | mdedit_view::Action::Select(_))
+        ) {
+            // The document has the keyboard again.
+            self.find.focus = None;
+        }
         let task = self.handle(message);
         self.align_left_table();
         let comment_focus = self.after_comments_update();
         self.after_slash_update();
         // Give the keyboard back to the document when the tab, mode or a
         // modal layer changes, and after jumping from the sidebar (unless a
-        // comment box just opened and wants it).
+        // comment box just opened and wants it). A menu or the floating
+        // toolbar closing leaves the find bar its keyboard.
         let after = focus_key(self);
         let task = if let Some(focus) = comment_focus {
             Task::batch([task, focus])
-        } else if (before != after || jump) && !after.1 && !after.2 {
+        } else if (before.0 != after.0 || (before != after && self.find.focus.is_none()) || jump)
+            && !after.1
+            && !after.2
+        {
             Task::batch([task, self.focus_document()])
         } else {
             task
         };
-        let derived = Task::batch([self.refresh_derived(), self.spawn_parse_jobs()]);
+        let derived = Task::batch([self.refresh_derived(), self.spawn_parse_jobs(), self.find_refresh()]);
         if is_edit && let Some(t) = &mut self.trace {
             t.update_took(started.elapsed());
         }
@@ -615,6 +635,7 @@ impl App {
                 return self.run(id);
             }
             Message::Key { key, modifiers, captured } => return self.on_key(key, modifiers, captured),
+            Message::Modifiers(m) => self.find.alt = m.alt() && !m.command(),
             Message::Project(m) => return self.on_project(m),
             Message::OpenFolder(dir) => return self.open_folder(dir),
             Message::MenuOpen(m) => self.menu_open = if self.menu_open == m { None } else { m },
@@ -641,7 +662,9 @@ impl App {
             }
             Message::ToolbarTick => {
                 let t = &mut self.toolbar;
-                if t.rect.is_some() && !t.dismissed && t.changed.elapsed() >= TOOLBAR_DELAY {
+                // Matches selected from the find bar are not for formatting.
+                if t.rect.is_some() && !t.dismissed && t.changed.elapsed() >= TOOLBAR_DELAY && self.find.focus.is_none()
+                {
                     t.visible = true;
                 }
             }
@@ -790,6 +813,7 @@ impl App {
             Message::FileChanged(path) => self.on_file_changed(&path),
             Message::Dialog(choice) => return self.on_dialog(choice),
             Message::Export(msg) => return self.on_export(msg),
+            Message::Find(msg) => return self.on_find(msg),
             Message::Comments(msg) => return self.on_comments(msg),
             Message::Slash(msg) => return self.on_slash(msg),
             Message::CloseRequested => return self.run_app(AppCommand::Quit),
@@ -859,6 +883,11 @@ impl App {
 
     /// Keep cheap derived data (outline, search results, stats) in step with
     /// the active buffer. Expensive work (stats) runs on a worker.
+    /// The find options changed: redo the sidebar results with them.
+    pub(crate) fn search_options_changed(&mut self) {
+        self.search.for_version = None;
+    }
+
     fn refresh_derived(&mut self) -> Task<Message> {
         self.outline.retain(|(id, _, _)| self.tabs.iter().any(|t| t.id == *id));
         self.stats.retain(|(id, _, _)| self.tabs.iter().any(|t| t.id == *id));
@@ -885,7 +914,7 @@ impl App {
             && !tab.doc.is_large()
             && self.search.for_version != Some((id, version))
         {
-            let query = SearchQuery { pattern: self.search.query.clone(), ..Default::default() };
+            let query = SearchQuery { pattern: self.search.query.clone(), ..self.find.search_query() };
             self.search.results = match find_all(tab.doc.buffer(), &query) {
                 Ok(matches) => matches
                     .into_iter()
@@ -932,6 +961,9 @@ impl App {
         if let Some(task) = self.slash_key(&key) {
             return task;
         }
+        if let Some(task) = self.find_key(&key, modifiers) {
+            return task;
+        }
         if key == Key::Named(Named::Escape) {
             if self.toolbar.visible {
                 self.toolbar.visible = false;
@@ -944,6 +976,9 @@ impl App {
             }
             if self.dialog.is_some() {
                 return self.on_dialog(DialogChoice::Cancel);
+            }
+            if self.find.open && self.prompt.is_none() {
+                return self.on_find(FindMsg::Close);
             }
             self.prompt = None;
             if let Some(p) = &mut self.project {
@@ -1105,7 +1140,11 @@ impl App {
                     tab.set_selection(Selection { anchor: 0, head: len });
                 }
             }
-            Find | FindInFiles | ShowSearch => {
+            Find => return self.on_find(FindMsg::Open { replace: false }),
+            Replace => return self.on_find(FindMsg::Open { replace: true }),
+            FindNext => return self.on_find(FindMsg::Next),
+            FindPrev => return self.on_find(FindMsg::Prev),
+            FindInFiles | ShowSearch => {
                 self.sidebar.visible = true;
                 self.sidebar.tab = SidebarTab::Search;
                 if let Some(tab) = self.active_tab() {

@@ -24,7 +24,8 @@ ICONS = [
     "table", "image", "minus", "type",
     # Files and sidebar
     "file", "file-text", "file-plus", "file-down", "folder", "folder-open",
-    "folder-plus", "list-tree", "search", "replace", "save", "download",
+    "folder-plus", "list-tree", "search", "replace", "replace-all",
+    "case-sensitive", "whole-word", "regex", "save", "download",
     "upload", "trash-2", "external-link", "copy",
     # Git and sync
     "git-branch", "git-commit-horizontal", "git-merge", "history", "tag",

@@ -382,6 +382,9 @@ impl App {
         if let Some(b) = self.banner(tab) {
             col = col.push(container(b).padding(Padding::from([SPACE_2, SPACE_4])));
         }
+        if let Some(bar) = self.find_bar() {
+            col = col.push(bar).push(hline(t));
+        }
         let body = crate::context::context_area(self.document_body(tab), |p| Message::ContextMenu(Some(p)))
             .keys_blocked(self.modal_open())
             .nav_blocked(self.slash.menu.is_some());
@@ -604,6 +607,27 @@ impl App {
         for (start, end, label) in &self.search.results {
             col = col.push(sidebar_row(t, text(label.clone()).size(UI_SMALL), Message::SearchJump(*start, *end), 0.0));
         }
+        let f = &self.find;
+        let toggle = |name: &'static str, on: bool, tip: &'static str, which: crate::find::Toggle| {
+            with_tooltip(
+                t,
+                crate::find::icon_button(
+                    t,
+                    name,
+                    if on { Btn::Toggled } else { Btn::Ghost },
+                    Some(Message::Find(crate::find::FindMsg::Toggle(which))),
+                ),
+                tip,
+            )
+        };
+        let input = row![
+            input,
+            toggle("case-sensitive", f.case_sensitive, "Match case", crate::find::Toggle::Case),
+            toggle("whole-word", f.whole_word, "Words", crate::find::Toggle::Word),
+            toggle("regex", f.regex, "Regex", crate::find::Toggle::Regex),
+        ]
+        .spacing(SPACE_1)
+        .align_y(Alignment::Center);
         column![
             container(input).padding(Padding::from([0.0, SPACE_2])),
             container(text(summary).size(UI_SMALL).color(c(t, T::TextMuted))).padding(Padding::from([0.0, SPACE_3])),
@@ -863,7 +887,11 @@ pub(crate) fn small_button<'a>(t: &'a Theme, label: &'a str, kind: Btn, msg: Opt
         .into()
 }
 
-fn with_tooltip<'a>(t: &'a Theme, content: impl Into<Element<'a, Message>>, tip: &str) -> Element<'a, Message> {
+pub(crate) fn with_tooltip<'a>(
+    t: &'a Theme,
+    content: impl Into<Element<'a, Message>>,
+    tip: &str,
+) -> Element<'a, Message> {
     tooltip(
         content,
         container(text(tip.to_string()).size(UI_SMALL))

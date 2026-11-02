@@ -86,8 +86,12 @@ Status: draft v0.1 (2026-11-01). Visual and interaction rules are in
 - Undo/redo with grouping (consecutive typing groups by word / 1 s pause),
   unlimited within memory budget, survives mode switches. Not persisted
   across restarts in v1.
-- Find and replace (Ctrl+F / Ctrl+H) with plain text, case, whole word and
-  regex options; project-wide search in the sidebar (Ctrl+Shift+F).
+- Find and replace (Ctrl+F / Ctrl+H) in a bar above the document, with
+  match case, whole word and regex toggles (icon buttons, Alt+C / W / X);
+  Ctrl+F with a single-line selection searches for it. Replace steps match
+  by match; Replace All is one undo step, and regex replacements expand
+  `$1` / `${name}`. Project-wide search in the sidebar (Ctrl+Shift+F) uses
+  the same toggles.
 - Outline from headings, click to jump.
 - Word / character count, reading time.
 - Session restore: open tabs, cursor positions and scroll on restart.
