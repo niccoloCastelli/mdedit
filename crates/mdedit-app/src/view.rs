@@ -508,6 +508,9 @@ impl App {
 
     fn files_panel(&self) -> Element<'_, Message> {
         let t = &self.theme;
+        if let Some(loader) = self.project_loading_panel() {
+            return loader;
+        }
         if let Some(tree) = self.project_files_panel() {
             return tree;
         }
@@ -523,7 +526,7 @@ impl App {
                 .padding(Padding::from([SPACE_2, 0.0])),
         ]
         .spacing(2);
-        let projects: Vec<&std::path::PathBuf> = self.session.recent_projects.iter().filter(|d| d.is_dir()).collect();
+        let projects = &self.session.recent_projects;
         if !projects.is_empty() {
             col = col.push(heading("RECENT PROJECTS"));
         }

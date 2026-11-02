@@ -261,6 +261,7 @@ pub struct App {
     pub project: Option<project::ProjectState>,
     /// Text-input dialog of the project and git commands.
     pub prompt: Option<project::Prompt>,
+    pub project_loading: Option<project::Loading>,
 }
 
 #[derive(Debug, Default)]
@@ -346,6 +347,7 @@ impl App {
             stats_spawned: None,
             project: None,
             prompt: None,
+            project_loading: None,
         };
         app.load_themes();
         app.apply_theme();
@@ -384,7 +386,8 @@ impl App {
         if let Some(last) = args.last() {
             app.restore_active = Some(last.clone());
         }
-        if let Some(dir) = app.session.project.clone().filter(|d| d.is_dir()) {
+        // No existence check here: on a slow mount even that blocks.
+        if let Some(dir) = app.session.project.clone() {
             tasks.push(Task::done(Message::OpenFolder(dir)));
         }
         if to_open.is_empty() {
@@ -1744,7 +1747,7 @@ impl App {
                 .session
                 .recent_projects
                 .iter()
-                .filter(|d| d.is_dir() && Some(d.as_path()) != self.project_root())
+                .filter(|d| Some(d.as_path()) != self.project_root())
                 .map(|d| palette::Item::Project {
                     path: d.clone(),
                     title: d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

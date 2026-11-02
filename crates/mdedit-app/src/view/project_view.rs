@@ -37,6 +37,37 @@ fn pm(m: Msg) -> Message {
 }
 
 impl App {
+    /// The Files panel while a slow folder is being opened.
+    pub(super) fn project_loading_panel(&self) -> Option<Element<'_, Message>> {
+        let t = &self.theme;
+        let l = self.project_loading.as_ref().filter(|l| l.shown)?;
+        let name = l.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        // One turn per second.
+        let turn = l.started.elapsed().as_secs_f32().fract() * std::f32::consts::TAU;
+        let spinner: Element<'_, Message> = match mdedit_theme::icon("refresh-cw") {
+            Some(bytes) => svg(svg::Handle::from_memory(bytes))
+                .width(16)
+                .height(16)
+                .rotation(iced::Radians(turn))
+                .style(move |_, _| svg::Style { color: Some(c(t, T::Accent)) })
+                .into(),
+            None => Space::new().width(16).into(),
+        };
+        let col = column![
+            row![spinner, text(format!("Opening {name}…")).size(UI)].spacing(SPACE_2).align_y(Alignment::Center),
+            text(
+                "This folder is slow to read, for example on a network or cloud drive. You can keep editing meanwhile."
+            )
+            .size(UI_SMALL)
+            .color(c(t, T::TextMuted)),
+            container(small_button(t, "Cancel", Btn::Secondary, Some(pm(Msg::CancelLoading))))
+                .padding(Padding::from([SPACE_1, 0.0])),
+        ]
+        .spacing(SPACE_2)
+        .padding(Padding::from([SPACE_1, SPACE_2]));
+        Some(col.into())
+    }
+
     pub(super) fn project_files_panel(&self) -> Option<Element<'_, Message>> {
         let t = &self.theme;
         let p = self.project.as_ref()?;
@@ -295,6 +326,9 @@ impl App {
     pub(super) fn project_status(&self) -> (Option<Element<'_, Message>>, Option<Element<'_, Message>>) {
         let t = &self.theme;
         let muted = c(t, T::TextMuted);
+        if self.project_loading.as_ref().is_some_and(|l| l.shown) {
+            return (None, Some(text("opening project…").size(UI_SMALL).color(muted).into()));
+        }
         let Some(p) = &self.project else { return (None, None) };
         let (mut branch_el, mut state) = (None, None);
         if let Some(g) = &p.git {
