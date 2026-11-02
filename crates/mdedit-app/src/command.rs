@@ -44,6 +44,9 @@ pub enum AppCommand {
     Paste,
     SelectAll,
     Find,
+    Replace,
+    FindNext,
+    FindPrev,
     FindInFiles,
     ModeEdit,
     ModeSplit,
@@ -125,6 +128,9 @@ app_commands! {
     Paste, "edit.paste", "Paste", Some("clipboard-paste"), None;
     SelectAll, "edit.select_all", "Select All", None, None;
     Find, "edit.find", "Find", Some("search"), Some("Ctrl+F");
+    Replace, "edit.replace", "Replace", Some("replace"), Some("Ctrl+H");
+    FindNext, "edit.find_next", "Find Next", Some("chevron-down"), Some("F3");
+    FindPrev, "edit.find_prev", "Find Previous", Some("chevron-up"), Some("Shift+F3");
     FindInFiles, "edit.find_in_files", "Find in Files", Some("search"), Some("Ctrl+Shift+F");
     ModeEdit, "view.mode_edit", "Edit Mode", Some("code"), Some("Ctrl+1");
     ModeSplit, "view.mode_split", "Split Mode", Some("columns-2"), Some("Ctrl+2");
@@ -238,6 +244,9 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
                 Some("edit.select_all"),
                 None,
                 Some("edit.find"),
+                Some("edit.replace"),
+                Some("edit.find_next"),
+                Some("edit.find_prev"),
                 Some("edit.find_in_files"),
                 None,
                 Some("edit.paste_table"),

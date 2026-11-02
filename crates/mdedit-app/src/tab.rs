@@ -8,7 +8,7 @@ use mdedit_core::document::SavePoint;
 use mdedit_core::io::{self, FileFormat};
 use mdedit_core::mapped::Remap;
 use mdedit_core::{Document, Edit, EditOrigin, Selection, TextBuffer};
-use mdedit_editor::EditorState;
+use mdedit_editor::{EditorState, Highlight};
 use mdedit_view::ViewState;
 
 use crate::settings::Mode;
@@ -58,6 +58,10 @@ pub struct Tab {
     pub table: Option<std::ops::Range<usize>>,
     /// The sidecar's comments and their live ranges (`comments.rs`).
     pub comments: crate::comments::DocComments,
+    /// Highlights from the comments and from the find bar, merged into the
+    /// widgets' `highlights` by [`Tab::set_highlights`].
+    comment_highlights: Vec<Highlight>,
+    search_highlights: Vec<Highlight>,
 }
 
 impl Tab {
@@ -79,7 +83,30 @@ impl Tab {
             skip_select: false,
             table: None,
             comments,
+            comment_highlights: Vec::new(),
+            search_highlights: Vec::new(),
         }
+    }
+
+    /// Replace the comment or the search highlights (`None` keeps the
+    /// current ones) and give every widget the merged list, in document
+    /// order.
+    pub fn set_highlights(&mut self, comments: Option<Vec<Highlight>>, search: Option<Vec<Highlight>>) {
+        if let Some(c) = comments {
+            self.comment_highlights = c;
+        }
+        if let Some(s) = search {
+            self.search_highlights = s;
+        }
+        let mut all: Vec<Highlight> = self.comment_highlights.iter().chain(&self.search_highlights).cloned().collect();
+        all.sort_by_key(|h| (h.range.start, h.range.end));
+        self.view.highlights = all.clone();
+        self.preview.highlights = all.clone();
+        self.editor.highlights = all;
+    }
+
+    pub fn has_search_highlights(&self) -> bool {
+        !self.search_highlights.is_empty()
     }
 
     pub fn title(&self) -> String {
@@ -283,6 +310,22 @@ pub async fn load(path: PathBuf, threshold: u64) -> Result<Handoff<Document>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comment_and_search_highlights_merge_in_order() {
+        use mdedit_editor::HighlightKind as K;
+        let h = |r: std::ops::Range<usize>, kind| Highlight { range: r, kind };
+        let mut tab = Tab::new(1, Document::from_text("abcdefghij"), Mode::Edit, 1);
+        tab.set_highlights(Some(vec![h(2..4, K::Comment)]), None);
+        tab.set_highlights(None, Some(vec![h(0..1, K::SearchMatch), h(5..6, K::CurrentSearchMatch)]));
+        let starts: Vec<usize> = tab.editor.highlights.iter().map(|h| h.range.start).collect();
+        assert_eq!(starts, [0, 2, 5]);
+        assert_eq!(tab.view.highlights, tab.editor.highlights);
+        // Clearing the search keeps the comments.
+        tab.set_highlights(None, Some(Vec::new()));
+        assert_eq!(tab.preview.highlights, [h(2..4, K::Comment)]);
+        assert!(!tab.has_search_highlights());
+    }
 
     fn tab_for(path: &Path) -> Tab {
         Tab::new(1, io::load(path, u64::MAX).unwrap(), Mode::Edit, 0)

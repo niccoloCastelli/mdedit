@@ -4,6 +4,7 @@
 pub(crate) const ICONS: &[(&str, &[u8])] = &[
     ("bold", include_bytes!("../../../assets/icons/lucide/letter-b.svg")),
     ("book-open", include_bytes!("../../../assets/icons/lucide/book-open.svg")),
+    ("case-sensitive", include_bytes!("../../../assets/icons/lucide/case-sensitive.svg")),
     ("check", include_bytes!("../../../assets/icons/lucide/check.svg")),
     ("chevron-down", include_bytes!("../../../assets/icons/lucide/chevron-down.svg")),
     ("chevron-left", include_bytes!("../../../assets/icons/lucide/chevron-left.svg")),
@@ -67,7 +68,9 @@ pub(crate) const ICONS: &[(&str, &[u8])] = &[
     ("quote", include_bytes!("../../../assets/icons/lucide/quote.svg")),
     ("redo-2", include_bytes!("../../../assets/icons/lucide/redo-2.svg")),
     ("refresh-cw", include_bytes!("../../../assets/icons/lucide/refresh-cw.svg")),
+    ("regex", include_bytes!("../../../assets/icons/lucide/regex.svg")),
     ("replace", include_bytes!("../../../assets/icons/lucide/replace.svg")),
+    ("replace-all", include_bytes!("../../../assets/icons/lucide/replace-all.svg")),
     ("rotate-ccw-clock", include_bytes!("../../../assets/icons/lucide/rotate-ccw-clock.svg")),
     ("save", include_bytes!("../../../assets/icons/lucide/save.svg")),
     ("search", include_bytes!("../../../assets/icons/lucide/search.svg")),
@@ -83,5 +86,6 @@ pub(crate) const ICONS: &[(&str, &[u8])] = &[
     ("type", include_bytes!("../../../assets/icons/lucide/type.svg")),
     ("undo-2", include_bytes!("../../../assets/icons/lucide/undo-2.svg")),
     ("upload", include_bytes!("../../../assets/icons/lucide/upload.svg")),
+    ("whole-word", include_bytes!("../../../assets/icons/lucide/whole-word.svg")),
     ("x", include_bytes!("../../../assets/icons/lucide/x.svg")),
 ];

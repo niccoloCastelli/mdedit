@@ -9,6 +9,14 @@
   (vector) and DOCX exports. Editing the block in View mode shows its source
   with the diagram updating under it. Insert > Mermaid Diagram and
   `/mermaid` add a starter block.
+- **Find and replace:** Ctrl+F opens a find bar above the document (Ctrl+H
+  with a replace row), searching for the selected text when there is one.
+  Matches are highlighted in every mode with an "n of N" count; Enter,
+  Shift+Enter and F3 / Shift+F3 step through them. Replace and Replace All
+  (one undo step, with `$1` groups in regex mode).
+- **Search modes:** match case, whole word and regex toggles as icon
+  buttons in the find bar and the sidebar Search panel (Alt+C / W / X), like
+  JetBrains editors.
 
 ## v0.1.2 (2026-11-02)
 
