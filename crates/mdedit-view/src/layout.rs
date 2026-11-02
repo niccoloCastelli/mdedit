@@ -10,6 +10,7 @@ use std::path::Path;
 
 use iced::advanced::graphics::text::Paragraph;
 use iced::advanced::image::Handle;
+use iced::advanced::svg::Handle as SvgHandle;
 use iced::advanced::text::{self, LineHeight, Paragraph as _, Shaping, Span, Text, Wrapping};
 use iced::border::Radius;
 use iced::{Border, Color, Font, Pixels, Point, Rectangle, Size, alignment};
@@ -18,6 +19,7 @@ use mdedit_render::{Align, Callout, Inline, LayoutNode, ListItem, SpanStyle};
 use mdedit_theme::space::*;
 use mdedit_theme::typography::{self, TextStyle};
 
+use crate::diagrams::{self, DiagramState};
 use crate::geometry;
 use crate::images::{self, ImageState};
 use crate::style::{Look, bold, italic};
@@ -164,6 +166,11 @@ pub(crate) enum Item {
         rect: Rectangle,
         handle: Handle,
     },
+    /// A rendered Mermaid diagram.
+    Svg {
+        rect: Rectangle,
+        handle: SvgHandle,
+    },
     Check {
         rect: Rectangle,
         checked: bool,
@@ -212,7 +219,8 @@ pub(crate) struct BlockLayout {
     pub items: Vec<Item>,
     pub laid_start: usize,
     pub table: Option<TableInfo>,
-    /// Image cache generation this layout saw, if it holds images.
+    /// Media generation ([`crate::widget::media_generation`]) this layout
+    /// saw, if it holds images or diagrams.
     pub image_gen: Option<u64>,
     pub revealed: bool,
 }
@@ -478,6 +486,40 @@ pub(crate) fn append_images(ctx: &Ctx<'_>, layout: &mut BlockLayout, node: &Layo
     let Some(h) = b.image_paragraph(inlines, 0.0, y, ctx.width) else { return };
     layout.items.extend(b.items.into_iter().filter(|i| !matches!(i, Item::Text(_))));
     layout.height = y + h;
+    layout.image_gen = Some(ctx.image_gen);
+}
+
+/// Keep a revealed Mermaid block's diagram visible under its source while
+/// it is edited (the last good one while the source doesn't parse), with
+/// the error under it.
+pub(crate) fn append_diagram(ctx: &Ctx<'_>, layout: &mut BlockLayout, node: &LayoutNode) {
+    let LayoutNode::CodeBlock { lang: Some(lang), code, source, .. } = node else { return };
+    if !mdedit_mermaid::is_mermaid(lang) {
+        return;
+    }
+    let mut b = Builder { ctx, items: Vec::new(), table: None, images: true };
+    let mut y = layout.height + SPACE_4;
+    let state = b.diagram_state(code, source.start);
+    let (shown, error) = match state {
+        DiagramState::Ready(d) => (Some(d), None),
+        DiagramState::Loading { stale } => (stale, None),
+        DiagramState::Failed { error, stale } => (stale, Some(error)),
+    };
+    if let Some(error) = error {
+        y += b.diagram_error(&error, source.end, 0.0, y, ctx.width);
+    }
+    if let Some(d) = shown {
+        y += SPACE_2 + b.place_diagram(&d, 0.0, y + SPACE_2, ctx.width);
+    }
+    // The error label is not part of the source: keep it out of hit tests.
+    layout.items.extend(b.items.into_iter().map(|i| match i {
+        Item::Text(mut t) => {
+            t.map.clear();
+            Item::Text(t)
+        }
+        other => other,
+    }));
+    layout.height = y;
     layout.image_gen = Some(ctx.image_gen);
 }
 
@@ -760,6 +802,11 @@ impl Builder<'_, '_> {
                 h
             }
             LayoutNode::List { start, tight, items, .. } => self.list(*start, *tight, items, x, y, width, color),
+            LayoutNode::CodeBlock { lang: Some(lang), code, segments, source, .. }
+                if mdedit_mermaid::is_mermaid(lang) =>
+            {
+                self.diagram(code, segments, source.start, x, y, width)
+            }
             LayoutNode::CodeBlock { lang, code, segments, .. } => {
                 let width = (self.ctx.wide - x).max(width);
                 self.code_block(lang.as_deref(), code, segments, x, y, width, c.text)
@@ -1011,6 +1058,77 @@ impl Builder<'_, '_> {
             });
         }
         h
+    }
+
+    fn diagram_state(&self, code: &str, at: usize) -> DiagramState {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut slot = DefaultHasher::new();
+        (self.ctx.doc_path, at).hash(&mut slot);
+        diagrams::cache().get(code, &self.look().mermaid, slot.finish())
+    }
+
+    /// A Mermaid block as its diagram; as code with the error under it when
+    /// the source doesn't render.
+    #[allow(clippy::too_many_arguments)]
+    fn diagram(
+        &mut self,
+        code: &str,
+        segments: &[mdedit_render::Segment],
+        at: usize,
+        x: f32,
+        y: f32,
+        width: f32,
+    ) -> f32 {
+        let c = self.look().colors;
+        let z = self.ctx.zoom;
+        self.images = true;
+        match self.diagram_state(code, at) {
+            DiagramState::Ready(d) | DiagramState::Loading { stale: Some(d) } => self.place_diagram(&d, x, y, width),
+            DiagramState::Loading { stale: None } => {
+                let h = 120.0 * z;
+                self.items.push(Item::Quad {
+                    rect: Rectangle::new(Point::new(x, y), Size::new(width, h)),
+                    color: c.bg_subtle,
+                    border: Border { color: c.border, width: 1.0, radius: RADIUS_LG.into() },
+                });
+                let base = scaled(typography::UI, z);
+                let rs = RunStyle { base, font: self.look().font(&base), color: c.muted, uppercase: false };
+                let mut runs = self.runs(&[], &rs);
+                self.push_text(&mut runs, "Rendering diagram", SpanStyle::default(), at..at, false, &rs, None);
+                let ty = y + (h - base.line_height) / 2.0;
+                self.paragraph(runs, &rs, x + SPACE_4, ty, width - 2.0 * SPACE_4, false);
+                h
+            }
+            DiagramState::Failed { error, .. } => {
+                let wide = (self.ctx.wide - x).max(width);
+                let h = self.code_block(Some("mermaid"), code, segments, x, y, wide, c.text);
+                let end = segments.last().map_or(at, |s| s.source.end);
+                h + SPACE_2 + self.diagram_error(&error, end, x, y + h + SPACE_2, width)
+            }
+        }
+    }
+
+    /// Draw a diagram at its natural size × zoom, shrunk to fit and centred
+    /// in the column (wide ones may use the wider measure).
+    fn place_diagram(&mut self, d: &diagrams::Ready, x: f32, y: f32, width: f32) -> f32 {
+        let z = self.ctx.zoom;
+        let avail = (self.ctx.wide - x).max(width);
+        let scale = z.min(avail / d.width.max(1.0));
+        let (dw, dh) = (d.width * scale, d.height * scale);
+        let left = if dw <= width { x + (width - dw) / 2.0 } else { x };
+        self.items
+            .push(Item::Svg { rect: Rectangle::new(Point::new(left, y), Size::new(dw, dh)), handle: d.handle.clone() });
+        dh
+    }
+
+    fn diagram_error(&mut self, error: &str, at: usize, x: f32, y: f32, width: f32) -> f32 {
+        let c = self.look().colors;
+        let base = scaled(typography::UI_SMALL, self.ctx.zoom);
+        let rs = RunStyle { base, font: self.look().font(&base), color: c.danger, uppercase: false };
+        let mut runs = self.runs(&[], &rs);
+        let label = format!("Diagram error: {error}");
+        self.push_text(&mut runs, &label, SpanStyle::default(), at..at, false, &rs, None);
+        self.paragraph(runs, &rs, x, y, width, true).1
     }
 
     /// A paragraph of nothing but images (and the breaks between them) is

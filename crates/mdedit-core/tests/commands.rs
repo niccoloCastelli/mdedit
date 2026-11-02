@@ -116,6 +116,7 @@ fn registry_shortcuts_match_design_system() {
     assert_eq!(slash("format.h1"), Some("h1"));
     assert_eq!(slash("format.task_list"), Some("todo"));
     assert_eq!(slash("insert.hr"), Some("hr"));
+    assert_eq!(slash("insert.mermaid"), Some("mermaid"));
 }
 
 // ---- inline toggles ----
@@ -263,6 +264,13 @@ fn horizontal_rule_is_its_own_block() {
     check(DocCommand::HorizontalRule, "a¦", "a\n\n---\n¦");
     check(DocCommand::HorizontalRule, "a\n\n¦\n\nb", "a\n\n---\n¦\nb");
     check(DocCommand::HorizontalRule, "a\n¦", "a\n\n---\n¦");
+}
+
+#[test]
+fn mermaid_inserts_a_starter_diagram() {
+    let block = "```mermaid\nflowchart LR\n  A --> B¦\n```";
+    check(DocCommand::Mermaid, "a¦", &format!("a\n\n{block}\n"));
+    check(DocCommand::Mermaid, "a\n\n¦\n\nb", &format!("a\n\n{block}\n\nb"));
 }
 
 // ---- smart editing ----

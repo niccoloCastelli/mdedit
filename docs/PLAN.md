@@ -22,6 +22,7 @@ set of files, so parallel branches rarely touch the same code.
 | `mdedit-editor` | Edit-mode widget (iced) | W4 editor widget |
 | `mdedit-render` | GPU-free layout model | W5 render & View |
 | `mdedit-view` | View/Split widget (iced) | W5 render & View |
+| `mdedit-mermaid` | Mermaid → themed SVG / PNG (no iced) | ws/mermaid |
 | `mdedit-theme` | tokens, themes, type scale, fonts, icons | W6 theme |
 | `mdedit-app` | binary `mdedit`: shell, menus, tabs, panels, settings | W7 app shell |
 | `mdedit-project` | project.toml, file tree, assets, watcher | W8 project |
@@ -193,7 +194,7 @@ first merge.
 ### Later
 - **Wiring panels** (Outline, Search, Git, Comments, Export dialog) is W7's
   job as each backend lands.
-- **v1.x:** math (Typst → SVG), Mermaid, branch merge + conflict UI.
+- **v1.x:** math (Typst → SVG), Mermaid (done: `mdedit-mermaid`, ws/mermaid), branch merge + conflict UI.
 - **v2:** collaboration (CRDT behind the edit log), `mdedit-mcp`.
 
 ## 4. Dependency graph

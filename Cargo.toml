@@ -23,6 +23,7 @@ mdedit-git = { path = "crates/mdedit-git" }
 mdedit-export = { path = "crates/mdedit-export" }
 mdedit-editor = { path = "crates/mdedit-editor" }
 mdedit-view = { path = "crates/mdedit-view" }
+mdedit-mermaid = { path = "crates/mdedit-mermaid" }
 
 # GUI. `advanced` exposes the widget/renderer traits needed for custom widgets
 # that only lay out what is visible; `canvas` for custom drawing; `tokio` runs
@@ -82,6 +83,10 @@ typst-pdf = "0.15"
 typst-layout = "0.15"
 typst-svg = "0.15"
 docx-rs = "0.4"
+# Mermaid diagrams (pure Rust) to SVG; resvg/usvg at iced's version turn
+# their text into paths and rasterise PNGs for DOCX.
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 

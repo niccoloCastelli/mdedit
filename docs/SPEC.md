@@ -30,7 +30,7 @@ Status: draft v0.1 (2026-11-01). Visual and interaction rules are in
 | Milestone | Scope |
 |---|---|
 | **v1** | Everything in sections 3-10 unless marked *later* |
-| **v1.x** | Math (`$...$`, `$$...$$`), Mermaid diagrams, branch merge and conflict resolution |
+| **v1.x** | Math (`$...$`, `$$...$$`), Mermaid diagrams (done), branch merge and conflict resolution |
 | **v2** | Collaborative mode, MCP server |
 
 ## 3. Documents and modes
@@ -61,10 +61,15 @@ Status: draft v0.1 (2026-11-01). Visual and interaction rules are in
   GitHub Flavored Markdown), but table editing needs them, so they are
   enabled along with the other GFM features `pulldown-cmark` supports
   natively.
+- **Mermaid** (fenced ```` ```mermaid ```` blocks) renders as a diagram in
+  View, Split and Read modes and in PDF/DOCX export (pure Rust, ARCHITECTURE
+  4.4). In View mode the block under the cursor shows its source with the
+  diagram under it, updating as you type; a source that doesn't parse shows
+  as code with the error under it (exports keep it as code).
 - **Later (v1.x), designed for now:** math (`pulldown-cmark`'s
   `ENABLE_MATH` gives inline/display math events; rendering via a pure-Rust
-  TeX-to-shapes layer, see ARCHITECTURE 4.4) and Mermaid (fenced
-  ```` ```mermaid ```` blocks). Until supported, both render as code blocks.
+  TeX-to-shapes layer, see ARCHITECTURE 4.4). Until supported it renders as
+  code.
   The block renderer is a trait so these plug in without touching the editor.
 - Raw HTML is shown as source in View mode (not rendered as a web page).
   Inline `<br>`, `<sup>`, `<sub>`, `<kbd>` are rendered.
@@ -283,7 +288,7 @@ file; changes apply live.
 - Built-in templates: **Guide** (the look of the reference PDF: eyebrow,
   numbered sections, rounded tables, callouts), **Report**, **Plain**.
 - Images, tables, footnotes, task lists and code highlighting are exported;
-  math and Mermaid once supported.
+  Mermaid diagrams (vector in PDF, 2× PNG in DOCX); math once supported.
 
 ## 11. Next phase (v2), constraints for v1
 

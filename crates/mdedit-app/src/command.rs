@@ -272,6 +272,7 @@ pub fn menus() -> &'static [(&'static str, &'static [Option<&'static str>])] {
             &[
                 Some("insert.image"),
                 Some("insert.code_block"),
+                Some("insert.mermaid"),
                 Some("insert.table"),
                 Some("insert.hr"),
                 None,

@@ -10,6 +10,7 @@
 //! worker.
 
 pub mod ast;
+mod diagram;
 mod docx;
 pub mod highlight;
 mod pdf;
@@ -133,7 +134,15 @@ pub fn export(
     match format {
         ExportFormat::Pdf => {
             let mut images = ImageResolver::new(base_dir);
-            let files = typst_markup::convert(&doc, &settings, &mut |url| images.resolve(url));
+            let mut diagrams = diagram::Diagrams::new(&settings.template.code_theme);
+            let images = std::cell::RefCell::new(&mut images);
+            let files =
+                typst_markup::convert(&doc, &settings, &mut |url| images.borrow_mut().resolve(url), &mut |src| {
+                    let d = diagrams.get(src)?;
+                    let path = images.borrow_mut().add_bytes("svg", d.svg.clone());
+                    Some((path, Some(d.width * diagram::PT_PER_PX)))
+                });
+            let images = images.into_inner();
             let fonts = template_fonts(template);
             let today = jiff::civil::Date::strptime("%Y-%m-%d", &settings.date)
                 .ok()
@@ -164,11 +173,16 @@ pub fn export_to_file(
 
 /// The generated Typst sources (for golden tests, and for template authors
 /// debugging a `template.typ`). Images are referenced as `/__img/<url>`
-/// without checking that they exist.
+/// without checking that they exist, Mermaid diagrams as
+/// `/__diagram/<n>.svg` without rendering them.
 pub fn typst_source(markdown: &str, template: &Template, options: &ExportOptions) -> Result<TypstFiles, ExportError> {
     let mut settings = Settings::new(template, options)?;
     let doc = settings.doc(markdown, options);
-    Ok(typst_markup::convert(&doc, &settings, &mut |url| Some(format!("/__img/{url}"))))
+    let mut n = 0;
+    Ok(typst_markup::convert(&doc, &settings, &mut |url| Some(format!("/__img/{url}")), &mut |_| {
+        n += 1;
+        Some((format!("/__diagram/{}.svg", n - 1), None))
+    }))
 }
 
 /// The main XML parts of the DOCX (for golden tests). `base_dir` resolves
@@ -218,11 +232,17 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// An image file in the Typst world.
+pub(crate) enum ImageData {
+    File(PathBuf),
+    Bytes(Vec<u8>),
+}
+
 /// Maps image URLs to virtual paths in the Typst world.
 struct ImageResolver<'a> {
     base_dir: &'a Path,
     by_url: HashMap<String, Option<String>>,
-    files: Vec<(String, PathBuf)>,
+    files: Vec<(String, ImageData)>,
 }
 
 impl<'a> ImageResolver<'a> {
@@ -237,10 +257,17 @@ impl<'a> ImageResolver<'a> {
         let vpath = local_image_path(self.base_dir, url).filter(|p| p.is_file()).map(|path| {
             let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
             let vpath = format!("/__img/{}.{ext}", self.files.len());
-            self.files.push((vpath.clone(), path));
+            self.files.push((vpath.clone(), ImageData::File(path)));
             vpath
         });
         self.by_url.insert(url.to_string(), vpath.clone());
+        vpath
+    }
+
+    /// A generated image (a rendered diagram).
+    fn add_bytes(&mut self, ext: &str, bytes: Vec<u8>) -> String {
+        let vpath = format!("/__img/{}.{ext}", self.files.len());
+        self.files.push((vpath.clone(), ImageData::Bytes(bytes)));
         vpath
     }
 }

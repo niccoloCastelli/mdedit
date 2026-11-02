@@ -107,6 +107,7 @@ fn build(doc: &Doc, s: &Settings, image: &mut ImageLoader) -> Docx {
         next_numbering: 3,
         numberings: Vec::new(),
         next_pic: 1,
+        diagrams: crate::diagram::Diagrams::new(&t.code_theme),
         next_bookmark: 1,
         next_hyperlink: 1,
         counters: [0; 6],
@@ -186,6 +187,7 @@ struct Writer<'a> {
     /// (numbering id, start) for each ordered list.
     numberings: Vec<(usize, u64)>,
     next_pic: usize,
+    diagrams: crate::diagram::Diagrams,
     next_bookmark: usize,
     next_hyperlink: usize,
     counters: [usize; 6],
@@ -312,6 +314,7 @@ impl Writer<'_> {
                 self.out.push(Child::P(p));
                 self.blocks(body, &Ctx { style: Some(body_style), ..ctx.clone() });
             }
+            Block::Code { lang, text } if mdedit_mermaid::is_mermaid(lang) && self.diagram(text) => {}
             Block::Code { lang, text } => {
                 let lines = highlight(text, lang, &t.code_theme);
                 let n = lines.len();
@@ -440,6 +443,25 @@ impl Writer<'_> {
         self.out.push(Child::T(table));
         // Space after the table.
         self.out.push(Child::P(Paragraph::new().style("Compact")));
+    }
+
+    /// A Mermaid diagram as a centred picture (PNG at 2× for sharp
+    /// printing), if it renders.
+    fn diagram(&mut self, src: &str) -> bool {
+        let Some(d) = self.diagrams.get(src) else { return false };
+        let Ok(png) = mdedit_mermaid::to_png(d, 2.0) else { return false };
+        let (w, h) = (d.width.ceil().max(1.0) as u32, d.height.ceil().max(1.0) as u32);
+        let id = self.next_pic;
+        self.next_pic += 1;
+        let (mut w_emu, mut h_emu) = (w * EMU_PER_PX, h * EMU_PER_PX);
+        let max = self.text_width as u32 * EMU_PER_TWIP;
+        if w_emu > max {
+            h_emu = (h_emu as u64 * max as u64 / w_emu as u64) as u32;
+            w_emu = max;
+        }
+        let pic = Pic::new_with_dimensions(png, w * 2, h * 2).id(format!("rIdImage{id}")).size(w_emu, h_emu);
+        self.out.push(Child::P(Paragraph::new().style("Figure").add_run(Run::new().add_image(pic))));
+        true
     }
 
     fn picture(&mut self, url: &str, max_width_twips: i32) -> Option<Pic> {

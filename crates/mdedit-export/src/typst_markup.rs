@@ -20,6 +20,11 @@ pub const CONF_PATH: &str = "/__mdedit/conf.typ";
 pub const TEMPLATE_PATH: &str = "/__mdedit/template.typ";
 pub const MAIN_PATH: &str = "/__mdedit/main.typ";
 
+/// Mermaid source → (virtual path, width in pt).
+pub type DiagramLoader<'a> = dyn FnMut(&str) -> Option<(String, Option<f32>)> + 'a;
+
+const DIAGRAM_FALLBACK: &str = "#let md-diagram(path, width: auto, alt: \"\") = align(center, image(path, alt: alt))\n";
+
 pub struct TypstFiles {
     pub conf: String,
     pub main: String,
@@ -27,10 +32,26 @@ pub struct TypstFiles {
 
 /// `image` maps a markdown image URL to a path in the Typst world, or
 /// `None` when the image is not available (its alt text is shown instead).
-pub fn convert(doc: &Doc, s: &Settings, image: &mut dyn FnMut(&str) -> Option<String>) -> TypstFiles {
+/// `diagram` does the same for a Mermaid source, with the diagram's width in
+/// points when known; `None` keeps the block as code.
+pub fn convert(
+    doc: &Doc,
+    s: &Settings,
+    image: &mut dyn FnMut(&str) -> Option<String>,
+    diagram: &mut DiagramLoader,
+) -> TypstFiles {
     let conf = conf(doc, s);
-    let mut w =
-        Writer { out: String::new(), slugs: doc.slugs(), doc, s, image, footnotes_seen: HashSet::new(), code_end: 0 };
+    let mut w = Writer {
+        out: String::new(),
+        slugs: doc.slugs(),
+        doc,
+        s,
+        image,
+        diagram,
+        diagrams: false,
+        footnotes_seen: HashSet::new(),
+        code_end: 0,
+    };
     w.out.push_str(&format!("#import \"{TEMPLATE_PATH}\": *\n#show: md-document\n\n"));
     if let Some(title) = &doc.title {
         let mut blocks = doc.blocks.as_slice();
@@ -59,6 +80,11 @@ pub fn convert(doc: &Doc, s: &Settings, image: &mut dyn FnMut(&str) -> Option<St
     let mut main = w.out;
     while main.ends_with("\n\n") {
         main.pop();
+    }
+    if w.diagrams {
+        // Custom templates written before diagrams existed don't define
+        // `md-diagram`; the glob import replaces this fallback when they do.
+        main.insert_str(0, DIAGRAM_FALLBACK);
     }
     TypstFiles { conf, main }
 }
@@ -228,6 +254,9 @@ struct Writer<'a> {
     doc: &'a Doc,
     s: &'a Settings,
     image: &'a mut dyn FnMut(&str) -> Option<String>,
+    diagram: &'a mut DiagramLoader<'a>,
+    /// Whether `md-diagram` was called.
+    diagrams: bool,
     footnotes_seen: HashSet<String>,
     /// `out.len()` right after the last inline `#expression`.
     code_end: usize,
@@ -297,6 +326,7 @@ impl Writer<'_> {
                 self.out.push_str("])");
                 self.content(body);
             }
+            Block::Code { lang, text } if mdedit_mermaid::is_mermaid(lang) && self.diagram_call(text) => {}
             Block::Code { lang, text } => {
                 let _ = write!(self.out, "#md-code(lang: {}, (", string(lang));
                 for line in highlight(text, lang, &self.s.template.code_theme) {
@@ -381,6 +411,18 @@ impl Writer<'_> {
             }
         }
         self.out.push_str("\n)");
+    }
+
+    /// `#md-diagram(..)` for a Mermaid block, if it renders.
+    fn diagram_call(&mut self, src: &str) -> bool {
+        let Some((path, width)) = (self.diagram)(src) else { return false };
+        let _ = write!(self.out, "#md-diagram({}", string(&path));
+        if let Some(w) = width {
+            let _ = write!(self.out, ", width: {w:.1}pt");
+        }
+        self.out.push_str(", alt: \"Mermaid diagram\")");
+        self.diagrams = true;
+        true
     }
 
     fn missing_image(&mut self, alt: &str) {

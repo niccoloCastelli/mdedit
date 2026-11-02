@@ -30,7 +30,11 @@
 //!   `View::new(..).id(id)` (e.g. when switching to View mode).
 //! - Images resolve relative to `Document::path` and decode on worker
 //!   threads into a shared LRU ([`images::cache`], 64 MB by default).
+//! - ```` ```mermaid ```` blocks render as diagrams on a worker thread into
+//!   a shared LRU ([`diagrams::cache`], 16 MB of SVG by default); a block
+//!   being edited shows its source with the diagram under it.
 
+pub mod diagrams;
 mod edit;
 mod geometry;
 pub mod images;

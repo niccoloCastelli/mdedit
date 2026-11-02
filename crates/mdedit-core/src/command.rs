@@ -109,6 +109,8 @@ pub enum DocCommand {
     TaskList,
     Quote,
     CodeBlock,
+    /// A starter ```` ```mermaid ```` block, caret on its last line.
+    Mermaid,
     /// `rows` counts the header row. Inside a table this aligns it instead
     /// (Ctrl+Alt+T, DESIGN_SYSTEM 8.4).
     InsertTable {
@@ -173,6 +175,7 @@ doc_commands! {
     "format.task_list", "Task List", Some("list-todo"), Some("Ctrl+Shift+9"), Some("todo"), TaskList;
     "format.quote", "Quote", Some("quote"), Some("Ctrl+Shift+."), Some("quote"), Quote;
     "insert.code_block", "Code Block", Some("square-code"), Some("Ctrl+Alt+C"), Some("code"), CodeBlock;
+    "insert.mermaid", "Mermaid Diagram", Some("square-code"), None, Some("mermaid"), Mermaid;
     "insert.table", "Table", Some("table"), Some("Ctrl+Alt+T"), Some("table"), InsertTable { rows: 3, cols: 3 };
     "insert.image", "Image", Some("image"), Some("Ctrl+Alt+I"), Some("image"), Image { url: None };
     "insert.hr", "Horizontal Rule", Some("minus"), None, Some("hr"), HorizontalRule;
@@ -241,6 +244,7 @@ pub fn run(doc: &Document, selection: Selection, command: &DocCommand) -> Comman
         TaskList => block::toggle_list(doc, sel, block::List::Task),
         Quote => block::toggle_quote(doc, sel),
         CodeBlock => block::toggle_code_block(doc, sel),
+        Mermaid => block::mermaid(doc, sel),
         HorizontalRule => block::horizontal_rule(doc, sel),
         InsertTable { rows, cols } => match table::align_at(doc, sel.head, sel) {
             Some(r) => r,
