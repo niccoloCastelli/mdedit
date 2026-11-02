@@ -76,3 +76,25 @@ fn preview_renders_pages() {
     assert_eq!(&page.rgba[..4], &[255, 255, 255, 255]);
     assert!(page.rgba.chunks(4).any(|px| px[0] < 128));
 }
+
+#[test]
+fn title_page_adds_a_page() {
+    let doc = "# Title\n\nLead paragraph.\n\n## One\n\nText.\n";
+    let mut t = mdedit_export::Template::builtin("guide").unwrap();
+    let dir = std::env::temp_dir();
+    let pages = |t: &mdedit_export::Template| {
+        mdedit_export::preview(doc, &dir, t, &ExportOptions::default(), 4, 0.2).unwrap().page_count
+    };
+    let without = pages(&t);
+    t.title_page = true;
+    assert_eq!(pages(&t), without + 1);
+    // Without a title the title page shows the export title.
+    let untitled = "Intro.\n\n## One\n\nText.\n";
+    let options = ExportOptions { title: Some("Notes".into()), ..ExportOptions::default() };
+    let n =
+        |t: &mdedit_export::Template| mdedit_export::preview(untitled, &dir, t, &options, 4, 0.2).unwrap().page_count;
+    t.title_page = false;
+    let without = n(&t);
+    t.title_page = true;
+    assert_eq!(n(&t), without + 1);
+}
