@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.2.1 (2026-11-02)
+
+### Fixes
+
+- **Slow folders no longer freeze the window:** opening a project (from the
+  menu, Recent projects or at start-up) reads it and sets up the folder
+  watch in the background. When that takes more than a second, for example
+  on a Google Drive or network mount, the Files panel shows a spinner with
+  Cancel and the status bar says "opening project…"; you can keep editing
+  meanwhile. Recent-project lists no longer touch the disk while drawing.
+
+### Known limitations
+
+- Expanding a folder in the file tree still reads it on the UI thread, so a
+  very slow folder can pause the window briefly.
+- Only Linux is built and tested; macOS and Windows have no release builds.
+- Math is not rendered yet.
+- Git: no branch merge or conflict resolution, pull is fast-forward only,
+  and push needs a `--features push` build (the .deb is built without it).
+- No settings dialog: settings, keymap and themes are TOML files.
+
 ## v0.2.0 (2026-11-02)
 
 ### Features
@@ -32,24 +53,6 @@
 - No settings dialog: settings, keymap and themes are TOML files.
 - First frame on a GPU takes about 400 ms (Vulkan start-up).
 - Installing the .deb sets the markdown file icon for the whole system.
-
-## Unreleased
-
-### Features
-
-- **Mermaid diagrams:** ```` ```mermaid ```` blocks render as diagrams in
-  View, Split and Read modes, in the theme's colours and fonts, and in PDF
-  (vector) and DOCX exports. Editing the block in View mode shows its source
-  with the diagram updating under it. Insert > Mermaid Diagram and
-  `/mermaid` add a starter block.
-- **Find and replace:** Ctrl+F opens a find bar above the document (Ctrl+H
-  with a replace row), searching for the selected text when there is one.
-  Matches are highlighted in every mode with an "n of N" count; Enter,
-  Shift+Enter and F3 / Shift+F3 step through them. Replace and Replace All
-  (one undo step, with `$1` groups in regex mode).
-- **Search modes:** match case, whole word and regex toggles as icon
-  buttons in the find bar and the sidebar Search panel (Alt+C / W / X), like
-  JetBrains editors.
 
 ## v0.1.2 (2026-11-02)
 
