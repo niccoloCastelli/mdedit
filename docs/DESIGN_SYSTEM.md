@@ -433,3 +433,12 @@ table and can be overridden in a `keymap.toml`.
   it runs the status bar shows a sliding 48 px `accent` bar and the elapsed
   time; the result is a toast with Open / Show in folder (or Details on
   failure) that stays until dismissed, as toasts with actions do.
+- 2026-11-02: the export dialog grows to a large modal (window minus 64 px,
+  640-1200 px wide) so it can show a live preview: a 380 px left column with
+  the options, and the rendered PDF pages on `bg-subtle` to the right (white
+  pages, 1 px `border`, the elevation shadow), re-rendered 300 ms after the
+  last change. DOCX exports show the same preview with the note "PDF layout;
+  Word may differ slightly". "Edit template…" swaps the left column for the
+  template editor (sections in eyebrow caps; colours with a 24 px swatch;
+  choices as segments) without leaving the dialog; Esc goes back, and Save
+  template writes it to the project or to all documents.

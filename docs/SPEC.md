@@ -279,9 +279,16 @@ file; changes apply live.
 - **Templates** live in `.mdedit/templates/<name>/` (project) or the app config
   dir (global). A template is:
   - `template.toml`: page size, margins, fonts, sizes, colours, heading
-    numbering, header/footer text (with `{title}`, `{page}`, `{date}`
-    placeholders), title page on/off, table of contents on/off, code theme.
-    These options map to both outputs.
+    numbering, header/footer, title page on/off, table of contents on/off,
+    code theme. These options map to both outputs. `header` and `footer`
+    are either a string (`"left | centre | right"`, with `{title}`,
+    `{page}`, `{pages}`, `{date}` placeholders) or a table with `text`,
+    `logo` (PNG/JPEG/SVG path, relative to the template folder),
+    `logo_position` (left/center/right), `logo_height_mm`, `color`,
+    `size_pt`, `font`, `bold` and `rule` (a hairline under the header or
+    above the footer).
+  - Templates can be edited in the export dialog (Edit template…), which
+    shows a live preview and saves to the project or global folder.
   - optional `template.typ`: full Typst template for PDF for complete control.
   - optional `reference.docx`: styles copied into the generated DOCX.
     *Later:* v1 ships TOML-driven DOCX styles only; copying styles from a
