@@ -22,6 +22,7 @@ use crate::tab::{External, Tab};
 
 mod comments_view;
 mod project_view;
+mod tabs_view;
 
 const UI: f32 = 13.0;
 const UI_SMALL: f32 = 12.0;
@@ -73,6 +74,7 @@ impl App {
         if self.toolbar.visible
             && !modal
             && self.context_menu.is_none()
+            && self.tab_bar.menu.is_none()
             && self.active_tab().is_some_and(|t| t.editable() || t.mode == Mode::View)
             && let Some(rect) = self.toolbar.rect
         {
@@ -80,6 +82,9 @@ impl App {
         }
         if let Some(at) = self.context_menu {
             layers.push(self.context_menu_view(at));
+        }
+        if let Some(l) = self.tab_menu_layer() {
+            layers.push(l);
         }
         if let Some(l) = self.slash_layer() {
             layers.push(l);
@@ -338,39 +343,6 @@ impl App {
             "view.appearance_dark" => self.settings.appearance.mode == A::Dark,
             _ => false,
         }
-    }
-
-    fn tab_bar(&self) -> Element<'_, Message> {
-        let t = &self.theme;
-        let mut tabs = row![].spacing(0);
-        for (i, tab) in self.tabs.iter().enumerate() {
-            let active = i == self.active;
-            let dirty = if tab.is_dirty() { "●" } else { "" };
-            let close = button(text("×").size(UI))
-                .padding(Padding::from([0.0, SPACE_1]))
-                .style(style::btn(t, Btn::Ghost))
-                .on_press(Message::CloseTab(i));
-            let label = row![text(tab.title()).size(UI), text(dirty).size(UI_SMALL).color(c(t, T::Accent)), close]
-                .spacing(SPACE_2)
-                .height(Length::Fill)
-                .align_y(Alignment::Center);
-            let b = button(label)
-                .height(TAB_HEIGHT - 2.0)
-                .padding(Padding::from([0.0, SPACE_3]))
-                .style(style::tab(t, active))
-                .on_press(Message::SelectTab(i));
-            let line = container(Space::new()).height(2).width(Length::Fill).style(style::accent_line(t, active));
-            let cell = mouse_area(column![b, line].width(Length::Shrink)).on_middle_press(Message::CloseTab(i));
-            tabs = tabs.push(cell).push(vline(t));
-        }
-        container(
-            scrollable(tabs)
-                .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new().width(2).scroller_width(2))),
-        )
-        .width(Length::Fill)
-        .height(TAB_HEIGHT)
-        .style(style::chrome(t))
-        .into()
     }
 
     fn document_area(&self) -> Element<'_, Message> {
