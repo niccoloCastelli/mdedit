@@ -82,6 +82,7 @@ typst = "0.15"
 typst-pdf = "0.15"
 typst-layout = "0.15"
 typst-svg = "0.15"
+typst-render = "0.15"
 docx-rs = "0.4"
 # Mermaid diagrams (pure Rust) to SVG; resvg/usvg at iced's version turn
 # their text into paths and rasterise PNGs for DOCX.

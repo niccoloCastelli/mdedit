@@ -4,9 +4,15 @@
 //! The status bar shows the running export; the result is a notice with
 //! Open / Show in folder, or the error with its details.
 //!
+//! The dialog has a live preview of the PDF pages ([`preview`]) and a
+//! template editor ([`editor`]) that replaces the options pane.
+//!
 //! The app hooks in through one `export` field, one `Message::Export`
 //! variant and a few calls (`on_export`, `export_key`, `export_layers`,
 //! `export_status`, `ExportUi::subscription`).
+
+mod editor;
+mod preview;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,6 +26,8 @@ use mdedit_export::{ExportComment, ExportFormat, ExportOptions, Template};
 use mdedit_theme::space::*;
 use mdedit_theme::{ColorToken as T, Theme};
 
+use self::editor::{EditorMsg, Scope, TemplateEditor};
+use self::preview::PreviewState;
 use crate::app::{App, Message};
 use crate::style::{self, Btn, c};
 use crate::tab::TabId;
@@ -28,6 +36,8 @@ use crate::view::{bold, modal, small_button};
 const UI: f32 = 13.0;
 const UI_SMALL: f32 = 12.0;
 const EYEBROW: f32 = 11.0;
+/// Options / editor pane of the export dialog; the preview takes the rest.
+const SIDE_WIDTH: f32 = 380.0;
 
 /// Page sizes offered in the dialog; `None` keeps the template's.
 const PAGE_SIZES: &[(Option<&str>, &str)] =
@@ -50,6 +60,13 @@ pub enum ExportMsg {
     ShowFolder,
     ToggleDetails,
     Dismiss,
+    /// Open the template editor on the selected template.
+    EditTemplate,
+    /// Back from the editor to the template list (the draft is dropped).
+    CloseEditor,
+    Editor(EditorMsg),
+    PreviewTick,
+    PreviewDone(u64, Result<mdedit_export::Preview, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +93,7 @@ impl Choice {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ExportDialog {
     pub tab: TabId,
     pub format: ExportFormat,
@@ -90,11 +107,26 @@ pub struct ExportDialog {
     pub comment_count: usize,
     /// Templates that failed to load, shown under the list.
     pub warnings: Vec<String>,
+    /// Project root of the document, if it is in one.
+    pub project: Option<PathBuf>,
+    pub editor: Option<TemplateEditor>,
+    pub preview: PreviewState,
 }
 
 impl ExportDialog {
+    /// The template being exported: the editor's draft while it is open.
     fn template(&self) -> &Template {
-        &self.choices[self.selected].template
+        match &self.editor {
+            Some(e) => &e.draft,
+            None => &self.choices[self.selected].template,
+        }
+    }
+
+    fn templates_dir(&self, scope: Scope, global: &Path) -> PathBuf {
+        match (scope, &self.project) {
+            (Scope::Project, Some(root)) => root.join(".mdedit").join("templates"),
+            _ => global.to_path_buf(),
+        }
     }
 
     fn options(&self) -> ExportOptions {
@@ -149,6 +181,11 @@ pub struct ExportUi {
 
 impl ExportUi {
     pub fn subscription(&self) -> Option<Subscription<Message>> {
+        if self.dialog.as_ref().is_some_and(|d| d.preview.pending()) {
+            return Some(
+                iced::time::every(Duration::from_millis(100)).map(|_| Message::Export(ExportMsg::PreviewTick)),
+            );
+        }
         self.job
             .is_some()
             .then(|| iced::time::every(Duration::from_millis(100)).map(|_| Message::Export(ExportMsg::Tick)))
@@ -252,13 +289,57 @@ struct Work {
 }
 
 impl Work {
-    fn run(mut self) -> Result<PathBuf, String> {
+    fn new(
+        tab: &crate::tab::Tab,
+        template: Template,
+        mut options: ExportOptions,
+        format: ExportFormat,
+        out: PathBuf,
+    ) -> Self {
+        let doc_path = tab.doc.path.clone();
+        let base_dir = doc_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .or_else(|| out.parent().map(Path::to_path_buf))
+            .unwrap_or_default();
+        // `{title}` for documents without a title heading.
+        options.title = Some(
+            doc_path
+                .as_deref()
+                .and_then(Path::file_stem)
+                .map_or_else(|| tab.title(), |s| s.to_string_lossy().into_owned()),
+        );
+        Work { snapshot: tab.doc.buffer().snapshot(), doc_path, base_dir, template, options, format, out }
+    }
+
+    /// Comments re-anchored against the snapshot, when they are included.
+    fn load_comments(&mut self) -> Result<(), String> {
         if self.options.include_comments
             && let Some(path) = &self.doc_path
         {
             let sidecar = mdedit_sidecar::Sidecar::load(path).map_err(|e| format!("comments: {e}"))?;
             self.options.comments = export_comments(&sidecar, &*self.snapshot);
         }
+        Ok(())
+    }
+
+    fn preview(mut self) -> Result<mdedit_export::Preview, String> {
+        self.load_comments()?;
+        let markdown = self.snapshot.text();
+        mdedit_export::preview(
+            &markdown,
+            &self.base_dir,
+            &self.template,
+            &self.options,
+            preview::MAX_PAGES,
+            preview::PIXEL_PER_PT,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    fn run(mut self) -> Result<PathBuf, String> {
+        self.load_comments()?;
         let markdown = self.snapshot.text();
         mdedit_export::export_to_file(&markdown, &self.base_dir, &self.template, &self.options, self.format, &self.out)
             .map_err(|e| match e {
@@ -297,29 +378,31 @@ impl App {
                     d.selected = i;
                     d.toc = d.template().toc;
                     d.numbers = d.template().heading_numbers;
+                    d.preview.invalidate();
                 }
             }
-            ExportMsg::PageSize(size) => {
-                if let Some(d) = &mut self.export.dialog {
-                    d.page_size = size;
-                }
-            }
-            ExportMsg::Toc(on) => {
-                if let Some(d) = &mut self.export.dialog {
-                    d.toc = on;
-                }
-            }
-            ExportMsg::Numbers(on) => {
-                if let Some(d) = &mut self.export.dialog {
-                    d.numbers = on;
-                }
-            }
-            ExportMsg::Comments(on) => {
-                if let Some(d) = &mut self.export.dialog {
-                    d.include_comments = on;
-                }
-            }
+            ExportMsg::PageSize(size) => self.with_dialog(|d| d.page_size = size),
+            ExportMsg::Toc(on) => self.with_dialog(|d| d.toc = on),
+            ExportMsg::Numbers(on) => self.with_dialog(|d| d.numbers = on),
+            ExportMsg::Comments(on) => self.with_dialog(|d| d.include_comments = on),
             ExportMsg::Cancel => self.export.dialog = None,
+            ExportMsg::EditTemplate => {
+                if let Some(d) = &mut self.export.dialog {
+                    d.editor = Some(TemplateEditor::new(d.template(), d.project.is_some()));
+                }
+            }
+            ExportMsg::CloseEditor => self.with_dialog(|d| {
+                d.editor = None;
+                d.toc = d.template().toc;
+                d.numbers = d.template().heading_numbers;
+            }),
+            ExportMsg::Editor(msg) => return self.on_editor_msg(msg),
+            ExportMsg::PreviewTick => return self.start_preview(),
+            ExportMsg::PreviewDone(generation, result) => {
+                if let Some(d) = &mut self.export.dialog {
+                    d.preview.finished(generation, result);
+                }
+            }
             ExportMsg::Confirm => return self.confirm_export(),
             ExportMsg::PathPicked(None) => self.export.pending = None,
             ExportMsg::PathPicked(Some(path)) => return self.start_export(path),
@@ -364,6 +447,7 @@ impl App {
             return Task::none();
         };
         let project = doc_path.as_deref().and_then(mdedit_project::Project::find_root);
+        let project_root = project.clone();
         let project_templates = project.as_ref().map(|root| root.join(".mdedit").join("templates"));
         let (choices, warnings) =
             template_choices(project_templates.as_deref(), &self.paths.config_dir.join("templates"));
@@ -391,6 +475,9 @@ impl App {
             include_comments: self.export.last_comments.unwrap_or(true),
             comment_count,
             warnings,
+            project: project_root,
+            editor: None,
+            preview: PreviewState::default(),
         });
         // Take the keyboard from the document so Enter and typing reach
         // the dialog only; closing it gives focus back (App::update).
@@ -398,6 +485,12 @@ impl App {
     }
 
     fn confirm_export(&mut self) -> Task<Message> {
+        if let Some(Some(e)) = self.export.dialog.as_mut().map(|d| d.editor.as_mut())
+            && let Err(err) = e.valid()
+        {
+            e.error = Some(err);
+            return Task::none();
+        }
         let Some(d) = self.export.dialog.take() else { return Task::none() };
         let Some(tab) = self.tabs.iter().find(|t| t.id == d.tab) else { return Task::none() };
         self.export.last_template = Some(d.template().name.clone());
@@ -436,30 +529,7 @@ impl App {
             self.toast_error("The document was closed before the export started.");
             return Task::none();
         };
-        let doc_path = tab.doc.path.clone();
-        let base_dir = doc_path
-            .as_deref()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .or_else(|| out.parent().map(Path::to_path_buf))
-            .unwrap_or_default();
-        let mut options = req.options;
-        // `{title}` for documents without a title heading.
-        options.title = Some(
-            doc_path
-                .as_deref()
-                .and_then(Path::file_stem)
-                .map_or_else(|| tab.title(), |s| s.to_string_lossy().into_owned()),
-        );
-        let work = Work {
-            snapshot: tab.doc.buffer().snapshot(),
-            doc_path,
-            base_dir,
-            template: req.template,
-            options,
-            format: req.format,
-            out: out.clone(),
-        };
+        let work = Work::new(tab, req.template, req.options, req.format, out.clone());
         self.export.next_id += 1;
         let id = self.export.next_id;
         let file_name = out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -471,13 +541,98 @@ impl App {
         )
     }
 
+    /// Change the dialog's options and schedule a new preview.
+    fn with_dialog(&mut self, f: impl FnOnce(&mut ExportDialog)) {
+        if let Some(d) = &mut self.export.dialog {
+            f(d);
+            d.preview.invalidate();
+        }
+    }
+
+    /// Render the preview on a worker when one is due (from the tick).
+    fn start_preview(&mut self) -> Task<Message> {
+        let Some(d) = &mut self.export.dialog else { return Task::none() };
+        let Some(generation) = d.preview.due() else { return Task::none() };
+        let template = match d.editor.as_ref().map(TemplateEditor::valid) {
+            Some(Err(err)) => {
+                d.preview.finished(generation, Err(err));
+                return Task::none();
+            }
+            Some(Ok(t)) => t.clone(),
+            None => d.template().clone(),
+        };
+        let (options, format, tab_id) = (d.options(), d.format, d.tab);
+        let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else { return Task::none() };
+        let work = Work::new(tab, template, options, format, PathBuf::new());
+        Task::perform(
+            async move { tokio::task::spawn_blocking(move || work.preview()).await.map_err(|e| e.to_string())? },
+            move |result| Message::Export(ExportMsg::PreviewDone(generation, result)),
+        )
+    }
+
+    fn on_editor_msg(&mut self, msg: EditorMsg) -> Task<Message> {
+        let global = self.paths.config_dir.join("templates");
+        let Some(d) = &mut self.export.dialog else { return Task::none() };
+        let Some(scope) = d.editor.as_ref().map(|e| e.scope) else { return Task::none() };
+        let target = d.templates_dir(scope, &global);
+        let project_templates = d.project.as_ref().map(|root| root.join(".mdedit").join("templates"));
+        let Some(e) = &mut d.editor else { return Task::none() };
+        match msg {
+            EditorMsg::BrowseLogo(part) => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Choose a logo")
+                            .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
+                            .pick_file()
+                            .await
+                            .map(|h| h.path().to_path_buf())
+                    },
+                    move |path| Message::Export(ExportMsg::Editor(EditorMsg::LogoPicked(part, path))),
+                );
+            }
+            EditorMsg::Save => {
+                let draft = match e.valid() {
+                    Ok(t) => t.clone(),
+                    Err(err) => {
+                        e.error = Some(err);
+                        return Task::none();
+                    }
+                };
+                match editor::save(&draft, &target) {
+                    Ok(dir) => {
+                        let (choices, warnings) = template_choices(project_templates.as_deref(), &global);
+                        d.selected =
+                            choices.iter().position(|c| c.template.dir.as_deref() == Some(dir.as_path())).unwrap_or(0);
+                        d.choices = choices;
+                        d.warnings = warnings;
+                        d.editor = None;
+                        d.toc = d.template().toc;
+                        d.numbers = d.template().heading_numbers;
+                        d.preview.invalidate();
+                        self.toast(format!("Saved template {} to {}", draft.name, dir.display()));
+                    }
+                    Err(err) => e.error = Some(format!("Could not save: {err}")),
+                }
+            }
+            msg => {
+                if e.update(&msg) {
+                    d.preview.invalidate();
+                }
+            }
+        }
+        Task::none()
+    }
+
     /// Keys while the export dialog is open: Esc cancels, Enter exports,
     /// everything else is swallowed like the other dialogs do.
     pub(crate) fn export_key(&mut self, key: &Key) -> Option<Task<Message>> {
-        self.export.dialog.as_ref()?;
+        let editing = self.export.dialog.as_ref()?.editor.is_some();
         Some(match key {
+            Key::Named(Named::Escape) if editing => self.on_export(ExportMsg::CloseEditor),
             Key::Named(Named::Escape) => self.on_export(ExportMsg::Cancel),
-            Key::Named(Named::Enter) => self.on_export(ExportMsg::Confirm),
+            // In the editor Enter belongs to its text inputs.
+            Key::Named(Named::Enter) if !editing => self.on_export(ExportMsg::Confirm),
             _ => Task::none(),
         })
     }
@@ -526,13 +681,67 @@ impl App {
     fn export_dialog<'a>(&'a self, d: &'a ExportDialog) -> Element<'a, Message> {
         let t = &self.theme;
         let label = format_label(d.format);
+        let title = self.tabs.iter().find(|x| x.id == d.tab).map(|x| x.title()).unwrap_or_default();
+        let ex = |m: ExportMsg| Message::Export(m);
+
+        let (heading, body, mut actions): (String, Element<'a, Message>, Vec<Element<'a, Message>>) = match &d.editor {
+            Some(e) => (
+                "Edit template".into(),
+                editor::view(t, e, d.project.as_deref()),
+                vec![
+                    small_button(t, "Back", Btn::Secondary, Some(ex(ExportMsg::CloseEditor))),
+                    Space::new().width(Length::Fill).into(),
+                    small_button(t, "Save template", Btn::Secondary, Some(ex(ExportMsg::Editor(EditorMsg::Save)))),
+                ],
+            ),
+            None => (
+                format!("Export as {label}"),
+                self.export_options(d),
+                vec![
+                    Space::new().width(Length::Fill).into(),
+                    small_button(t, "Cancel", Btn::Secondary, Some(ex(ExportMsg::Cancel))),
+                ],
+            ),
+        };
+        actions.push(small_button(t, "Export…", Btn::Primary, Some(ex(ExportMsg::Confirm))));
+
+        let side = column![
+            column![text(heading).size(16).font(bold()), text(title).size(UI).color(c(t, T::TextSecondary))]
+                .spacing(SPACE_1),
+            container(body).height(Length::Fill),
+            row(actions).spacing(SPACE_2).align_y(Alignment::Center),
+        ]
+        .spacing(SPACE_4)
+        .padding(SPACE_5)
+        .width(SIDE_WIDTH)
+        .height(Length::Fill);
+
+        let width = (self.window_size.width - 64.0).clamp(640.0, 1200.0);
+        let height = (self.window_size.height - 80.0).max(420.0);
+        let note = (d.format == ExportFormat::Docx).then_some("PDF layout; Word may differ slightly");
+        let pane = container(preview::view(t, &d.preview, width - SIDE_WIDTH - 1.0, note))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(c(t, T::BgSubtle))),
+                border: Border { radius: iced::border::Radius::default().right(RADIUS_LG), ..Border::default() },
+                ..container::Style::default()
+            });
+        let divider = container(Space::new()).width(1).height(Length::Fill).style(fill(t, T::Border));
+        let card = container(row![side, divider, pane]).width(width).height(height).style(style::popover(t, RADIUS_LG));
+        modal(t, card, ex(ExportMsg::Cancel), true)
+    }
+
+    /// Template list, page size and the per-export options.
+    fn export_options<'a>(&'a self, d: &'a ExportDialog) -> Element<'a, Message> {
+        let t = &self.theme;
         let eyebrow = |s: &'a str| text(s).size(EYEBROW).font(bold()).color(c(t, T::TextMuted));
 
         let mut list = column![].spacing(2);
         for (i, choice) in d.choices.iter().enumerate() {
             let origin = match choice.origin {
                 Origin::BuiltIn => "built-in",
-                Origin::Global => "global",
+                Origin::Global => "all documents",
                 Origin::Project => "project",
             };
             let selected = i == d.selected;
@@ -554,7 +763,11 @@ impl App {
                 .on_press(Message::Export(ExportMsg::Template(i))),
             );
         }
-        let mut templates = column![eyebrow("TEMPLATE"), scrollable(list).height(Length::Shrink)].spacing(SPACE_2);
+        let edit = button(text("Edit template…").size(UI_SMALL))
+            .padding(Padding::from([SPACE_1, SPACE_2]))
+            .style(style::btn(t, Btn::Secondary))
+            .on_press(Message::Export(ExportMsg::EditTemplate));
+        let mut templates = column![eyebrow("TEMPLATE"), list, edit].spacing(SPACE_2);
         for w in &d.warnings {
             templates = templates.push(text(format!("Not loaded: {w}")).size(UI_SMALL).color(c(t, T::WarningText)));
         }
@@ -593,32 +806,13 @@ impl App {
             let label = format!("Include comments as footnotes ({n} open)");
             options = options.push(check(d.include_comments, label, ExportMsg::Comments));
         }
-
-        let body = column![templates, column![eyebrow("PAGE SIZE"), sizes].spacing(SPACE_2), options,].spacing(SPACE_4);
-        let title = self.tabs.iter().find(|x| x.id == d.tab).map(|x| x.title()).unwrap_or_default();
-        let card = container(
-            column![
-                column![
-                    text(format!("Export as {label}")).size(16).font(bold()),
-                    text(title).size(UI).color(c(t, T::TextSecondary)),
-                ]
-                .spacing(SPACE_1),
-                body,
-                row![
-                    Space::new().width(Length::Fill),
-                    row![
-                        small_button(t, "Cancel", Btn::Secondary, Some(Message::Export(ExportMsg::Cancel))),
-                        small_button(t, "Export…", Btn::Primary, Some(Message::Export(ExportMsg::Confirm))),
-                    ]
-                    .spacing(SPACE_2)
-                ],
-            ]
-            .spacing(SPACE_4),
+        scrollable(
+            column![templates, column![eyebrow("PAGE SIZE"), sizes.wrap()].spacing(SPACE_2), options]
+                .spacing(SPACE_5)
+                .padding(Padding { right: SPACE_3, ..Padding::ZERO }),
         )
-        .width(480)
-        .padding(SPACE_5)
-        .style(style::popover(t, RADIUS_LG));
-        modal(t, card, Message::Export(ExportMsg::Cancel), true)
+        .height(Length::Fill)
+        .into()
     }
 
     fn export_notice<'a>(&'a self, n: &'a Notice) -> Element<'a, Message> {
@@ -695,7 +889,7 @@ fn fill(theme: &Theme, token: T) -> impl Fn(&iced::Theme) -> container::Style + 
 
 /// Checkbox from tokens: `border-strong` box, `accent` fill when checked,
 /// `on-accent` tick.
-fn checkbox_style(theme: &Theme) -> impl Fn(&iced::Theme, checkbox::Status) -> checkbox::Style + '_ {
+pub(crate) fn checkbox_style(theme: &Theme) -> impl Fn(&iced::Theme, checkbox::Status) -> checkbox::Style + '_ {
     move |_, status| {
         use checkbox::Status::*;
         let (checked, hovered, disabled) = match status {
@@ -785,6 +979,9 @@ mod tests {
             include_comments: true,
             comment_count: 0,
             warnings: Vec::new(),
+            project: None,
+            editor: None,
+            preview: PreviewState::default(),
         };
         let o = d.options();
         assert_eq!((o.toc, o.heading_numbers, o.page_size.clone(), o.include_comments), (None, None, None, false));
@@ -793,6 +990,15 @@ mod tests {
         d.comment_count = 2;
         let o = d.options();
         assert_eq!((o.toc, o.page_size.as_deref(), o.include_comments), (Some(!t.toc), Some("a5"), true));
+
+        // With the editor open the draft is the template being exported.
+        let mut e = TemplateEditor::new(&t, false);
+        e.update(&EditorMsg::Text(editor::Field::Name, "Draft".into()));
+        d.editor = Some(e);
+        assert_eq!(d.template().name, "Draft");
+        assert_eq!(d.templates_dir(Scope::Project, Path::new("/g")), PathBuf::from("/g"));
+        d.project = Some("/p".into());
+        assert_eq!(d.templates_dir(Scope::Project, Path::new("/g")), PathBuf::from("/p/.mdedit/templates"));
     }
 
     #[test]

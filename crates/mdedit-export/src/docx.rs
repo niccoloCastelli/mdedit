@@ -16,7 +16,7 @@ use docx_rs::{
 
 use crate::ast::{Align, Block, Doc, Inline, ListItem, plain_text};
 use crate::highlight::highlight;
-use crate::template::{NumberStyle, Style as Look, Template, page_size_mm, parse_hex};
+use crate::template::{HAlign, NumberStyle, Running, Style as Look, Template, page_size_mm, parse_hex};
 use crate::{ExportError, Settings};
 
 /// The XML parts golden tests compare.
@@ -90,10 +90,17 @@ fn build(doc: &Doc, s: &Settings, image: &mut ImageLoader) -> Docx {
     for style in styles(t) {
         docx = docx.add_style(style);
     }
-    if let Some(header) = running(&t.header, &title, &s.date, text_width) {
+    let mut next_pic = 1;
+    let mut logo = |r: &Running| {
+        let pic = logo_pic(t, r, image, next_pic);
+        next_pic += usize::from(pic.is_some());
+        pic
+    };
+    let (header_logo, footer_logo) = (logo(&t.header), logo(&t.footer));
+    if let Some(header) = running(&t.header, "PageHeader", header_logo, &title, &s.date, text_width) {
         docx = docx.header(Header::new().add_paragraph(header));
     }
-    if let Some(footer) = running(&t.footer, &title, &s.date, text_width) {
+    if let Some(footer) = running(&t.footer, "PageFooter", footer_logo, &title, &s.date, text_width) {
         docx = docx.footer(Footer::new().add_paragraph(footer));
     }
 
@@ -106,7 +113,7 @@ fn build(doc: &Doc, s: &Settings, image: &mut ImageLoader) -> Docx {
         next_footnote: 1,
         next_numbering: 3,
         numberings: Vec::new(),
-        next_pic: 1,
+        next_pic,
         diagrams: crate::diagram::Diagrams::new(&t.code_theme),
         next_bookmark: 1,
         next_hyperlink: 1,
@@ -604,25 +611,45 @@ fn page_break() -> Paragraph {
     Paragraph::new().add_run(Run::new().add_break(BreakType::Page))
 }
 
-/// Header or footer: `left | centre | right` with tab stops.
-fn running(text: &str, title: &str, date: &str, width: i32) -> Option<Paragraph> {
-    if text.trim().is_empty() {
+/// A header/footer logo scaled to `logo_height_mm`; SVGs are rasterised.
+fn logo_pic(t: &Template, r: &Running, image: &mut ImageLoader, id: usize) -> Option<Pic> {
+    let path = t.logo_path(r)?;
+    let bytes = image(&path.to_string_lossy())?;
+    let svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    let (png, w, h) = if svg { mdedit_mermaid::svg_to_png(&bytes, 512).ok()? } else { to_png(&bytes)? };
+    let h_emu = (r.logo_height_mm * 36_000.0).round() as u32;
+    let w_emu = (h_emu as u64 * w as u64 / h.max(1) as u64) as u32;
+    Some(Pic::new_with_dimensions(png, w, h).id(format!("rIdImage{id}")).size(w_emu, h_emu))
+}
+
+/// Header or footer: `left | centre | right` with tab stops, the logo at
+/// the start of its slot (at the end for the right slot).
+fn running(r: &Running, style: &str, logo: Option<Pic>, title: &str, date: &str, width: i32) -> Option<Paragraph> {
+    if r.text.trim().is_empty() && logo.is_none() {
         return None;
     }
-    let pieces: Vec<&str> = text.split('|').map(str::trim).collect();
+    let pieces: Vec<&str> = r.text.split('|').map(str::trim).collect();
     let parts: [&str; 3] = match pieces.as_slice() {
+        [] | [""] => ["", "", ""],
         [c] => ["", c, ""],
         [l, r] => [l, "", r],
         [l, c, r, ..] => [l, c, r],
-        [] => return None,
     };
     let mut p = Paragraph::new()
-        .style("HeaderFooter")
+        .style(style)
         .add_tab(Tab::new().val(TabValueType::Center).pos((width / 2) as usize))
         .add_tab(Tab::new().val(TabValueType::Right).pos(width as usize));
+    let mut logo = logo.map(|pic| (r.logo_position, pic));
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
             p = p.add_run(Run::new().add_tab());
+        }
+        let slot = HAlign::ALL[i];
+        let here = logo.as_ref().is_some_and(|(pos, _)| *pos == slot);
+        let gap = if part.is_empty() { "" } else { "  " };
+        if here && slot != HAlign::Right {
+            let (_, pic) = logo.take()?;
+            p = p.add_run(Run::new().add_image(pic).add_text(gap));
         }
         let mut rest = *part;
         while !rest.is_empty() {
@@ -641,6 +668,9 @@ fn running(text: &str, title: &str, date: &str, width: i32) -> Option<Paragraph>
                 None => p,
             };
             rest = after;
+        }
+        if here && let Some((_, pic)) = logo.take() {
+            p = p.add_run(Run::new().add_text(gap).add_image(pic));
         }
     }
     Some(p)
@@ -661,6 +691,20 @@ fn to_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let mut png = Cursor::new(Vec::new());
     img.write_to(&mut png, image::ImageFormat::Png).ok()?;
     Some((png.into_inner(), img.width(), img.height()))
+}
+
+/// The header or footer paragraph style from its template options.
+fn running_style(id: &str, name: &str, t: &Template, r: &Running) -> Style {
+    let fill = if r.color.is_empty() { &t.colors.text_muted } else { &r.color };
+    let font = if r.font.is_empty() { &t.font_body } else { &r.font };
+    let style = Style::new(id, StyleType::Paragraph)
+        .name(name)
+        .q_format(true)
+        .based_on("HeaderFooter")
+        .fonts(fonts(font))
+        .size(half_points(r.size(t.base_size_pt), 1.0))
+        .color(color(fill));
+    if r.bold { style.bold() } else { style }
 }
 
 fn color(hex: &str) -> String {
@@ -816,6 +860,8 @@ fn styles(t: &Template) -> Vec<Style> {
             .size(half_points(base, 0.85))
             .line_spacing(spacing(0, 0, None)),
         para("HeaderFooter", "Header Footer").based_on("Normal").size(half_points(base, 0.8)).color(muted.clone()),
+        running_style("PageHeader", "Page Header", t, &t.header),
+        running_style("PageFooter", "Page Footer", t, &t.footer),
         para("TOCHeading", "TOC Heading")
             .based_on("Normal")
             .size(half_points(base, 0.85))
@@ -878,6 +924,8 @@ fn styles(t: &Template) -> Vec<Style> {
             }
             "SourceCode" => pp.shading(shade(&subtle)),
             "Rule" => pp.set_borders(only(&[ParagraphBorderPosition::Bottom], 6, 1)),
+            "PageHeader" if t.header.rule => pp.set_borders(only(&[ParagraphBorderPosition::Bottom], 4, 4)),
+            "PageFooter" if t.footer.rule => pp.set_borders(only(&[ParagraphBorderPosition::Top], 4, 4)),
             _ => pp,
         };
         if style.style_id == "VerbatimChar" {

@@ -27,6 +27,8 @@
   eyebrow: none,
   header: ([Off-ramp stablecoins to a bank], none, [2026-01-02]),
   footer: (none, [#context counter(page).display()], none),
+  header-style: (logo: none, logo-pos: "left", logo-height: 8mm, fill: rgb("#716d68"), size: 8.8pt, font: "Source Serif 4", weight: "regular", rule: false),
+  footer-style: (logo: none, logo-pos: "left", logo-height: 8mm, fill: rgb("#716d68"), size: 8.8pt, font: "Source Serif 4", weight: "regular", rule: false),
 )
 
 // ---- main.typ

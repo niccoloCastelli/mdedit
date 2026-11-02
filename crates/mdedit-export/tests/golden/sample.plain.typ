@@ -27,6 +27,8 @@
   eyebrow: none,
   header: (none, none, none),
   footer: (none, [#context counter(page).display()], none),
+  header-style: (logo: none, logo-pos: "left", logo-height: 8mm, fill: rgb("#716d68"), size: 8.8pt, font: "Hanken Grotesk", weight: "regular", rule: false),
+  footer-style: (logo: none, logo-pos: "left", logo-height: 8mm, fill: rgb("#716d68"), size: 8.8pt, font: "Hanken Grotesk", weight: "regular", rule: false),
 )
 
 // ---- main.typ

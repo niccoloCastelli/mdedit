@@ -167,6 +167,20 @@ pub fn to_png(diagram: &Diagram, scale: f32) -> Result<Vec<u8>, Error> {
     pixmap.encode_png().map_err(|e| Error::Svg(e.to_string()))
 }
 
+/// Any SVG (a template logo) rasterised so its larger side is `max_px`;
+/// returns the PNG and its pixel size.
+pub fn svg_to_png(svg: &[u8], max_px: u32) -> Result<(Vec<u8>, u32, u32), Error> {
+    let tree = parse(svg)?;
+    let size = tree.size();
+    let scale = max_px as f32 / size.width().max(size.height()).max(1.0);
+    let px = size.to_int_size().scale_by(scale).ok_or_else(|| Error::Svg("empty size".into()))?;
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(px.width(), px.height()).ok_or_else(|| Error::Svg("image too large".into()))?;
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    let png = pixmap.encode_png().map_err(|e| Error::Svg(e.to_string()))?;
+    Ok((png, px.width(), px.height()))
+}
+
 fn parse(svg: &[u8]) -> Result<usvg::Tree, Error> {
     let options = usvg::Options { fontdb: fonts(), ..usvg::Options::default() };
     usvg::Tree::from_data(svg, &options).map_err(|e| Error::Svg(e.to_string()))

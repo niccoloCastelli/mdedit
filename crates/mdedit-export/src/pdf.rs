@@ -81,9 +81,13 @@ impl ExportWorld {
         ExportWorld { book, fonts, sources, images, main: file_id(MAIN_PATH), today }
     }
 
-    pub(crate) fn compile_pdf(&self) -> Result<Vec<u8>, ExportError> {
+    pub(crate) fn compile(&self) -> Result<PagedDocument, ExportError> {
         let warned = typst::compile::<PagedDocument>(self);
-        let document = warned.output.map_err(|errors| self.error(&errors))?;
+        warned.output.map_err(|errors| self.error(&errors))
+    }
+
+    pub(crate) fn compile_pdf(&self) -> Result<Vec<u8>, ExportError> {
+        let document = self.compile()?;
         let options = typst_pdf::PdfOptions::default();
         typst_pdf::pdf(&document, &options).map_err(|errors| self.error(&errors))
     }
