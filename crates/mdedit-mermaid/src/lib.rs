@@ -11,6 +11,9 @@
 //! the first call loads font metadata (tens of ms). Callers on a UI thread
 //! run it on a worker and cache the result (mdedit-view does).
 
+pub mod flowchart;
+
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
@@ -151,6 +154,36 @@ pub fn render(src: &str, style: &Style) -> Result<Diagram, Error> {
     Ok(Diagram { svg: flat.into_bytes(), width: size.width(), height: size.height() })
 }
 
+/// A node's box in a rendered diagram, top-left corner and size in px.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodeBox {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Where the renderer puts each node of `src` (the visual editor starts
+/// from the same layout as the rendered diagram, and sizes boxes to fit
+/// their labels). `None` when the source doesn't parse.
+pub fn node_boxes(src: &str, style: &Style) -> Option<HashMap<String, NodeBox>> {
+    if src.len() > MAX_SOURCE || src.trim().is_empty() {
+        return None;
+    }
+    seed_measure_font(&style.theme.font_family);
+    let parsed = mermaid_rs_renderer::parse_mermaid_strict(src).ok()?;
+    let options = RenderOptions { theme: style.theme.clone(), ..RenderOptions::default() };
+    let layout = mermaid_rs_renderer::compute_layout(&parsed.graph, &options.theme, &options.layout);
+    Some(
+        layout
+            .nodes
+            .into_iter()
+            .filter(|(_, n)| !n.hidden)
+            .map(|(id, n)| (id, NodeBox { x: n.x, y: n.y, width: n.width, height: n.height }))
+            .collect(),
+    )
+}
+
 fn first_line(e: &dyn std::fmt::Display) -> String {
     let s = e.to_string();
     s.lines().next().unwrap_or_default().trim().to_string()
@@ -283,6 +316,15 @@ mod tests {
         assert_eq!(&png[1..4], b"PNG");
         let w = u32::from_be_bytes(png[16..20].try_into().unwrap());
         assert_eq!(w, (d.width.ceil() as u32) * 2);
+    }
+
+    #[test]
+    fn node_boxes_follow_the_layout() {
+        let boxes = node_boxes("flowchart LR\n A[Start] --> B[A much longer label]", &style()).unwrap();
+        let (a, b) = (boxes["A"], boxes["B"]);
+        assert!(b.x > a.x + a.width - 1.0, "LR puts B right of A");
+        assert!(b.width > a.width);
+        assert!(node_boxes("not a diagram", &style()).is_none());
     }
 
     #[test]
