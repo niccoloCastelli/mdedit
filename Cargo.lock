@@ -4352,7 +4352,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arboard",
  "directories",
@@ -4380,7 +4380,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion",
  "memchr",
@@ -4397,7 +4397,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-editor"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "iced",
  "mdedit-core",
@@ -4407,7 +4407,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-export"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "docx-rs",
  "image",
@@ -4428,7 +4428,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-git"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "git2",
  "gix",
@@ -4438,7 +4438,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-mermaid"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mdedit-theme",
  "mermaid-rs-renderer",
@@ -4449,7 +4449,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-project"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "jiff",
  "mdedit-core",
@@ -4466,7 +4466,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-render"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mdedit-core",
  "pulldown-cmark",
@@ -4475,7 +4475,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-sidecar"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "jiff",
  "mdedit-core",
@@ -4489,7 +4489,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-theme"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "directories",
  "iced",
@@ -4502,7 +4502,7 @@ dependencies = [
 
 [[package]]
 name = "mdedit-view"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "iced",
  "image",

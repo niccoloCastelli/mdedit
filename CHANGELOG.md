@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.2 (2026-11-02)
+
+### Features
+
+- **Tab menu:** right-click a tab for Close, Close Others, Close All and
+  Close Tabs to the Left / Right. Saved tabs close at once; each tab with
+  unsaved changes asks in turn, and Cancel stops the rest.
+- **All-tabs list:** when the tabs don't fit, a chevron at the right end of
+  the tab bar lists every tab with its folder (the active one ticked,
+  unsaved ones dotted). Picking one, or switching to a tab that is scrolled
+  out of view, scrolls the tab bar to it.
+
+### Known limitations
+
+- Tab widths are estimated from the title length, so the all-tabs button
+  can appear slightly before the tabs actually overflow.
+- Expanding a folder in the file tree still reads it on the UI thread, so a
+  very slow folder can pause the window briefly.
+- Only Linux is built and tested; macOS and Windows have no release builds.
+- Math is not rendered yet.
+- Git: no branch merge or conflict resolution, pull is fast-forward only,
+  and push needs a `--features push` build (the .deb is built without it).
+- No settings dialog: settings, keymap and themes are TOML files.
+
 ## v0.2.1 (2026-11-02)
 
 ### Fixes
