@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.2.0 (2026-11-02)
+
+### Features
+
+- **Mermaid diagrams:** ```` ```mermaid ```` blocks render as diagrams in
+  View, Split and Read modes, drawn in the theme's colours and UI font by a
+  pure-Rust renderer on a background worker. While you edit a diagram block
+  you see its source and the diagram together, and the last good diagram
+  stays up while a half-typed edit is invalid. PDF and DOCX exports include
+  the diagrams (sharp 2x PNG in DOCX); a source that doesn't render stays a
+  code block. Insert > Mermaid Diagram and `/mermaid` add a starter block.
+- **Find and replace bar:** Ctrl+F opens a find bar above the document,
+  prefilled from a single-line selection; Ctrl+H adds a replace row. Matches
+  are highlighted in every mode with an "n of N" count. Enter / Shift+Enter
+  and F3 / Shift+F3 step through matches, Replace goes one match at a time,
+  and Replace All is a single undo step (with `$1` groups in regex mode).
+  Match case, whole word and regex toggles (Alt+C / Alt+W / Alt+X) are shared
+  with the sidebar search.
+
+### Known limitations
+
+- Only Linux is built and tested; macOS and Windows have no release builds.
+- Math is not rendered yet.
+- Mermaid covers the diagram types the bundled renderer supports; others
+  stay as code blocks. The first render seeds a font cache in
+  `~/.cache/mmdr`.
+- The first F3 right after switching mode can select match 1 again.
+- Git: no branch merge or conflict resolution, pull is fast-forward only,
+  and push needs a `--features push` build (the .deb is built without it).
+- No settings dialog: settings, keymap and themes are TOML files.
+- First frame on a GPU takes about 400 ms (Vulkan start-up).
+- Installing the .deb sets the markdown file icon for the whole system.
+
 ## Unreleased
 
 ### Features
