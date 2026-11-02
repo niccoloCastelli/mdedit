@@ -12,6 +12,7 @@ serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 mdedit-theme.workspace = true
+mdedit-mermaid.workspace = true
 typst.workspace = true
 typst-pdf.workspace = true
 docx-rs.workspace = true

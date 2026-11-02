@@ -353,7 +353,8 @@ toggles where it makes sense (Ctrl+B on bold text removes bold).
 | Image | Ctrl+Alt+I | `/image` |
 | Horizontal rule | | `/hr` |
 | Comment | Ctrl+Alt+M | `/comment` |
-| Math, Mermaid (later) | | `/math`, `/mermaid` |
+| Mermaid diagram | | `/mermaid` |
+| Math (later) | | `/math` |
 
 On macOS Ctrl is Cmd and Alt is Option. Shortcuts are defined in one keymap
 table and can be overridden in a `keymap.toml`.

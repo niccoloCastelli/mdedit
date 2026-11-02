@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- **Mermaid diagrams:** ```` ```mermaid ```` blocks render as diagrams in
+  View, Split and Read modes, in the theme's colours and fonts, and in PDF
+  (vector) and DOCX exports. Editing the block in View mode shows its source
+  with the diagram updating under it. Insert > Mermaid Diagram and
+  `/mermaid` add a starter block.
+
 ## v0.1.2 (2026-11-02)
 
 ### Features

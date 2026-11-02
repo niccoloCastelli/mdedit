@@ -16,6 +16,11 @@
 //   md-figure(path, alt: str, caption: content | none)
 //   md-image(path, alt: str)                 inline image
 //   md-missing-image[alt]                    image file not found
+//   md-diagram(path, width: length | auto, alt: str)
+//                                            rendered Mermaid diagram (SVG,
+//                                            text as paths); optional: a
+//                                            template without it gets a
+//                                            centred image
 //   md-callout(kind: str, title: content)[body]
 //   md-code(lang: str, lines)                lines: array of arrays of
 //                                            (text, "#rrggbb" | none, "b" | "i" | "bi" | "")
@@ -165,6 +170,18 @@
 #let md-image(path, alt: "") = box(height: 1.2em, baseline: 0.2em, image(path, alt: alt, height: 1.2em))
 
 #let md-missing-image(alt) = text(fill: conf.text-muted, [\[#alt\]])
+
+// Natural size (labels at 10.5pt), shrunk to the text width when wider.
+#let md-diagram(path, width: auto, alt: "") = block(
+  width: 100%,
+  above: 1.4em,
+  below: 1.4em,
+  align(center, layout(size => image(
+    path,
+    alt: alt,
+    width: if width == auto { auto } else { calc.min(width, size.width) },
+  ))),
+)
 
 #let md-callout(kind: "note", title: [], body) = {
   let warn = kind in ("warning", "caution", "important")

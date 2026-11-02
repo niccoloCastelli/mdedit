@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use iced::font::{Style as FontStyle, Weight};
 use iced::{Color, Font};
@@ -62,8 +62,25 @@ pub(crate) struct Look {
     pub ui: Font,
     pub colors: Colors,
     pub dark: bool,
+    /// Diagram colours and font (from the same theme).
+    pub mermaid: Arc<mdedit_mermaid::Style>,
     /// Hash of the above; part of every layout cache key.
     pub generation: u64,
+}
+
+/// The view is rebuilt on every update, so the diagram style is built once
+/// per theme.
+fn mermaid_style(theme: &Theme, generation: u64) -> Arc<mdedit_mermaid::Style> {
+    static LAST: Mutex<Option<(u64, Arc<mdedit_mermaid::Style>)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    match &*last {
+        Some((g, style)) if *g == generation => Arc::clone(style),
+        _ => {
+            let style = Arc::new(mdedit_mermaid::Style::from_theme(theme));
+            *last = Some((generation, Arc::clone(&style)));
+            style
+        }
+    }
 }
 
 impl Look {
@@ -104,13 +121,15 @@ impl Look {
             theme.color(t).hash(&mut h);
         }
         (&theme.fonts.prose, &theme.fonts.mono, &theme.fonts.ui).hash(&mut h);
+        let generation = h.finish();
         Self {
             prose: Font::with_name(intern(&theme.fonts.prose)),
             mono: Font::with_name(intern(&theme.fonts.mono)),
             ui: Font::with_name(intern(&theme.fonts.ui)),
             colors,
             dark: theme.kind == ThemeKind::Dark,
-            generation: h.finish(),
+            mermaid: mermaid_style(theme, generation),
+            generation,
         }
     }
 

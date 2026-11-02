@@ -1,11 +1,11 @@
 //! Export the sample document with every built-in template to PDF and DOCX.
 //!
 //! ```bash
-//! cargo run -p mdedit-export --example export_sample -- [OUT_DIR]
+//! cargo run -p mdedit-export --example export_sample -- [OUT_DIR] [FILE.md]
 //! ```
 //!
 //! Writes `sample-<template>.pdf` and `.docx` to `OUT_DIR` (default
-//! `target/export-sample`).
+//! `target/export-sample`). `FILE.md` replaces the sample document.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -13,13 +13,17 @@ use std::time::Instant;
 use mdedit_export::{ExportComment, ExportFormat, ExportOptions, Template, export_to_file};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let sample_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    let mut sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/sample.md");
+    if let Some(file) = std::env::args().nth(2) {
+        sample = PathBuf::from(file);
+    }
+    let sample_dir = sample.parent().unwrap_or(Path::new(".")).to_path_buf();
     let out_dir = std::env::args()
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/export-sample"));
     std::fs::create_dir_all(&out_dir)?;
-    let markdown = std::fs::read_to_string(sample_dir.join("sample.md"))?;
+    let markdown = std::fs::read_to_string(&sample)?;
     let offset = markdown.find("four steps").unwrap_or(0);
     let options = ExportOptions {
         include_comments: true,

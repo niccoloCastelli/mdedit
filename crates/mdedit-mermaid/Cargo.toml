@@ -1,0 +1,15 @@
+[package]
+name = "mdedit-mermaid"
+description = "Mermaid diagrams to SVG in pure Rust, styled with the mdedit theme, for View mode and export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mdedit-theme.workspace = true
+mermaid-rs-renderer.workspace = true
+resvg.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

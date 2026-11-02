@@ -257,6 +257,12 @@ pub(crate) fn insert_block(doc: &Document, sel: Selection, block: &str, after: A
     ch.finish(Selection::cursor(cursor))
 }
 
+pub(crate) fn mermaid(doc: &Document, sel: Selection) -> CommandResult {
+    let nl = doc.format.line_ending.as_str().len();
+    let caret = "```mermaid".len() + nl + "flowchart LR".len() + nl + "  A --> B".len();
+    insert_block(doc, sel, "```mermaid\nflowchart LR\n  A --> B\n```", After::In(caret))
+}
+
 pub(crate) fn horizontal_rule(doc: &Document, sel: Selection) -> CommandResult {
     insert_block(doc, sel, "---", After::Below)
 }

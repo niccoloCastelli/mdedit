@@ -26,11 +26,18 @@ use mdedit_theme::space::{self, SPACE_4, SPACE_6};
 use mdedit_theme::{Theme, typography};
 
 use crate::edit;
-use crate::images;
 use crate::layout::{self, BlockLayout, Ctx, Item, TableOp, TextItem};
 use crate::style::Look;
 use crate::table::Grid;
 use crate::{Action, SyncAnchor, ViewState, line_start};
+use crate::{diagrams, images};
+
+/// Changes whenever an image decode or a diagram render finishes; layouts
+/// holding either are redone when it does. Both counters only grow, so
+/// their sum does too.
+pub(crate) fn media_generation() -> u64 {
+    images::cache().generation() + diagrams::cache().generation()
+}
 
 /// Layouts kept per widget.
 const CACHE_CAP: usize = 512;
@@ -468,7 +475,7 @@ impl<'a, Message> View<'a, Message> {
         }
         let key = h.finish();
         st.tick += 1;
-        let image_gen = images::cache().generation();
+        let image_gen = media_generation();
         if let Some((layout, used)) = st.cache.get_mut(&key)
             && layout.image_gen.is_none_or(|g| g == image_gen)
         {
@@ -505,6 +512,10 @@ impl<'a, Message> View<'a, Message> {
             if block.kind == BlockKind::Paragraph && lines.iter().any(|(l, ..)| l.contains("![")) {
                 let node = mdedit_render::layout_block(block, buf).node;
                 layout::append_images(&ctx, &mut laid, &node);
+            }
+            if block.kind == BlockKind::Mermaid {
+                let node = mdedit_render::layout_block(block, buf).node;
+                layout::append_diagram(&ctx, &mut laid, &node);
             }
             laid
         } else {
@@ -1298,7 +1309,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
             self.follow(st, head);
         }
         st.last_head = Some(head);
-        st.image_gen = images::cache().generation();
+        st.image_gen = media_generation();
         adv_layout::Node::new(size)
     }
 
@@ -1339,12 +1350,12 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                     shell.request_redraw_at(*now + Duration::from_millis(wait as u64));
                 }
                 // Images that finished decoding need a new layout.
-                let generation = images::cache().generation();
+                let generation = media_generation();
                 if generation != st.image_gen {
                     st.image_gen = generation;
                     shell.invalidate_layout();
                     shell.request_redraw();
-                } else if images::cache().is_loading() {
+                } else if images::cache().is_loading() || diagrams::cache().is_loading() {
                     shell.request_redraw_at(*now + Duration::from_millis(50));
                 }
                 if let Some(Drag::Select { anchor, position }) = st.drag {
@@ -1453,6 +1464,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                                 ..adv_image::Image::new(handle.clone())
                             };
                             r.draw_image(image, *rect + origin, bounds);
+                        }
+                        Item::Svg { rect, handle } => {
+                            r.draw_svg(adv_svg::Svg::new(handle.clone()), *rect + origin, bounds);
                         }
                         Item::Check { rect, checked, .. } => {
                             let rect = *rect + origin;
@@ -1733,6 +1747,73 @@ mod tests {
                 break;
             }
             assert!(started.elapsed().as_secs() < 10, "image never loaded");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    fn svg_rect(st: &State, block: usize) -> Option<Rectangle> {
+        let v = st.visible.iter().find(|v| v.index == block)?;
+        v.layout.items.iter().find_map(|i| match i {
+            Item::Svg { rect, .. } => Some(*rect),
+            _ => None,
+        })
+    }
+
+    /// Lays out until the diagram worker has delivered.
+    fn prepared_with_diagram(d: &Document, state: &ViewState, block: usize) -> State {
+        let started = std::time::Instant::now();
+        loop {
+            let st = prepared(d, state);
+            if svg_rect(&st, block).is_some() {
+                return st;
+            }
+            assert!(started.elapsed().as_secs() < 20, "diagram never rendered");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn mermaid_blocks_render_as_diagrams() {
+        let d = doc("Intro.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter.\n");
+        let st = prepared_with_diagram(&d, &ViewState { read_only: true, ..ViewState::default() }, 1);
+        let rect = svg_rect(&st, 1).unwrap();
+        assert!(rect.width > 50.0 && rect.height > 20.0, "{rect:?}");
+        // Centred in the 720 px column, no source text shown.
+        assert!((rect.x + rect.width / 2.0 - 360.0).abs() < 1.0, "{rect:?}");
+        assert!(texts(&st, 1).is_empty());
+    }
+
+    #[test]
+    fn edited_mermaid_block_shows_source_then_diagram() {
+        let text = "Intro.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n";
+        let d = doc(text);
+        // Render it first (cursor elsewhere), then put the caret inside.
+        prepared_with_diagram(&d, &ViewState { read_only: true, ..ViewState::default() }, 1);
+        let state = ViewState { selection: Selection::cursor(text.find("A -->").unwrap()), ..ViewState::default() };
+        let st = prepared_with_diagram(&d, &state, 1);
+        let v = &st.visible[1];
+        assert!(v.layout.revealed);
+        let shown = texts(&st, 1).concat();
+        assert!(shown.contains("```mermaid") && shown.contains("A --> B"), "{shown:?}");
+        let text_bottom = v.layout.texts().map(|t| t.bounds().y + t.bounds().height).fold(0.0, f32::max);
+        let rect = svg_rect(&st, 1).unwrap();
+        assert!(rect.y >= text_bottom && v.layout.height >= rect.y + rect.height, "{rect:?}");
+    }
+
+    #[test]
+    fn broken_mermaid_shows_code_and_the_error() {
+        let d = doc("```mermaid\nflowchart LR\n  A -->\n```\n");
+        let state = ViewState { read_only: true, ..ViewState::default() };
+        let started = std::time::Instant::now();
+        loop {
+            let st = prepared(&d, &state);
+            let t = texts(&st, 0);
+            if t.iter().any(|t| t.starts_with("Diagram error: ")) {
+                assert!(t.iter().any(|t| t.contains("A -->")), "{t:?}");
+                assert!(svg_rect(&st, 0).is_none());
+                break;
+            }
+            assert!(started.elapsed().as_secs() < 20, "no error shown: {t:?}");
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }

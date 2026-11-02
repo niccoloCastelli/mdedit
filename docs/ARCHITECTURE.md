@@ -14,6 +14,7 @@ The repo becomes a Cargo workspace. Only `mdedit-app` depends on iced.
 crates/
   mdedit-core/      buffer, edit log, document, block index, parser, search, commands
   mdedit-render/    layout model shared by the app and export (no GPU code)
+  mdedit-mermaid/   Mermaid → themed SVG (text as paths) / PNG, for view and export
   mdedit-project/   project.toml, file tree, assets, watcher
   mdedit-sidecar/   sidecar TOML, comments, anchoring (also for loose files)
   mdedit-git/       versioning: autocommit, checkpoints, branches, sync
@@ -183,9 +184,20 @@ Built-ins handle CommonMark blocks; math and Mermaid register their own.
   tiny `$ ... $` document and draw the result as vector paths (`typst-svg` →
   iced `svg`), cached by formula hash. Same engine for screen and PDF, pure
   Rust.
-- Mermaid: no mature pure-Rust renderer is known to me today; candidates to
-  evaluate when we get there. Until then the block shows as code with a
-  "diagram" badge.
+- Mermaid (`mdedit-mermaid`): `mermaid-rs-renderer` (pure Rust, ~0.1-2 ms
+  per diagram) lays the diagram out with colours from the theme tokens and
+  the UI font; `usvg` then turns every label into paths using the bundled
+  fonts, so the SVG draws identically in iced's `svg` widget, in Typst and
+  as a `resvg` PNG for DOCX. The renderer measures labels with a system font
+  it caches under `$XDG_CACHE_HOME/mmdr/font-cache`; we seed that cache with
+  the bundled UI font so boxes fit (harmless if it ever stops working: boxes
+  get a little loose). The view does not use `BlockRenderer` for it: the
+  View widget draws ```` ```mermaid ```` code blocks itself
+  (`mdedit-view/src/diagrams.rs`, one worker thread started on first use, a
+  16 MB LRU of SVGs keyed by source + theme, and the last good diagram per
+  block shown while an edit is re-rendering). Sources over 64 KB stay
+  code. The release profile aborts on panic, so a proptest checks the
+  renderer on half-typed sources.
 
 ### 4.5 Renderer backend
 
