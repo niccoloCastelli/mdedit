@@ -176,6 +176,12 @@ pub(crate) enum Item {
         checked: bool,
         source: Range<usize>,
     },
+    /// "Edit diagram" button over a Mermaid diagram (shown on hover);
+    /// `source` is the whole fenced block.
+    EditDiagram {
+        rect: Rectangle,
+        source: Range<usize>,
+    },
     /// Copy button of a code block (shown on hover).
     Copy {
         rect: Rectangle,
@@ -509,7 +515,9 @@ pub(crate) fn append_diagram(ctx: &Ctx<'_>, layout: &mut BlockLayout, node: &Lay
         y += b.diagram_error(&error, source.end, 0.0, y, ctx.width);
     }
     if let Some(d) = shown {
-        y += SPACE_2 + b.place_diagram(&d, 0.0, y + SPACE_2, ctx.width);
+        let top = y + SPACE_2;
+        y += SPACE_2 + b.place_diagram(&d, 0.0, top, ctx.width);
+        b.edit_button(source.clone(), 0.0, top, ctx.width);
     }
     // The error label is not part of the source: keep it out of hit tests.
     layout.items.extend(b.items.into_iter().map(|i| match i {
@@ -805,7 +813,7 @@ impl Builder<'_, '_> {
             LayoutNode::CodeBlock { lang: Some(lang), code, segments, source, .. }
                 if mdedit_mermaid::is_mermaid(lang) =>
             {
-                self.diagram(code, segments, source.start, x, y, width)
+                self.diagram(code, segments, source.clone(), x, y, width)
             }
             LayoutNode::CodeBlock { lang, code, segments, .. } => {
                 let width = (self.ctx.wide - x).max(width);
@@ -1074,16 +1082,21 @@ impl Builder<'_, '_> {
         &mut self,
         code: &str,
         segments: &[mdedit_render::Segment],
-        at: usize,
+        source: Range<usize>,
         x: f32,
         y: f32,
         width: f32,
     ) -> f32 {
         let c = self.look().colors;
         let z = self.ctx.zoom;
+        let at = source.start;
         self.images = true;
         match self.diagram_state(code, at) {
-            DiagramState::Ready(d) | DiagramState::Loading { stale: Some(d) } => self.place_diagram(&d, x, y, width),
+            DiagramState::Ready(d) | DiagramState::Loading { stale: Some(d) } => {
+                let h = self.place_diagram(&d, x, y, width);
+                self.edit_button(source, x, y, width);
+                h
+            }
             DiagramState::Loading { stale: None } => {
                 let h = 120.0 * z;
                 self.items.push(Item::Quad {
@@ -1103,6 +1116,7 @@ impl Builder<'_, '_> {
                 let wide = (self.ctx.wide - x).max(width);
                 let h = self.code_block(Some("mermaid"), code, segments, x, y, wide, c.text);
                 let end = segments.last().map_or(at, |s| s.source.end);
+                self.edit_button(source, x, y, wide);
                 h + SPACE_2 + self.diagram_error(&error, end, x, y + h + SPACE_2, width)
             }
         }
@@ -1119,6 +1133,14 @@ impl Builder<'_, '_> {
         self.items
             .push(Item::Svg { rect: Rectangle::new(Point::new(left, y), Size::new(dw, dh)), handle: d.handle.clone() });
         dh
+    }
+
+    /// The hover button that opens the visual editor, in the top-right
+    /// corner of the column.
+    fn edit_button(&mut self, source: Range<usize>, x: f32, y: f32, width: f32) {
+        let size = 24.0 * self.ctx.zoom;
+        let rect = Rectangle::new(Point::new(x + width - size - SPACE_1, y + SPACE_1), Size::new(size, size));
+        self.items.push(Item::EditDiagram { rect, source });
     }
 
     fn diagram_error(&mut self, error: &str, at: usize, x: f32, y: f32, width: f32) -> f32 {

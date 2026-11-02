@@ -4,6 +4,7 @@ mod app;
 mod command;
 mod comments;
 mod context;
+mod diagram;
 mod export_ui;
 mod find;
 mod keymap;
@@ -24,21 +25,29 @@ fn main() -> iced::Result {
     trace::start();
     prefer_vulkan();
     let ui_font = style::font(&mdedit_theme::Fonts::default().ui);
-    let (settings, _) = settings::Settings::load(&settings::Paths::detect().settings());
-    let app = iced::application(App::new, App::update, App::view)
-        .window(window_settings())
-        .title(App::title)
-        .theme(App::iced_theme)
+    // A daemon, so diagram editors can open their own windows; App::new
+    // opens the main one.
+    let app = iced::daemon(App::new, App::update, App::view)
+        .title(App::window_title)
+        .theme(App::window_theme)
         .subscription(App::subscription)
-        .scale_factor(App::scale_factor)
-        .default_font(ui_font)
-        .exit_on_close_request(false)
-        .decorations(!settings.appearance.custom_title_bar())
-        .window_size((1200.0, 800.0));
+        .scale_factor(App::window_scale)
+        .default_font(ui_font);
     mdedit_theme::fonts().fold(app, |app, bytes| app.font(bytes)).run()
 }
 
-/// Base window settings; the builder calls in `main` fill in the rest. The
+/// The document window. It never closes by itself: the app asks to save
+/// first, then exits.
+fn main_window_settings(custom_title_bar: bool) -> iced::window::Settings {
+    iced::window::Settings {
+        size: iced::Size::new(1200.0, 800.0),
+        decorations: !custom_title_bar,
+        exit_on_close_request: false,
+        ..window_settings()
+    }
+}
+
+/// Base settings of every window. The
 /// Linux application id becomes WM_CLASS / the Wayland app id, which desktops
 /// match against `StartupWMClass` in packaging/linux/mdedit.desktop.
 fn window_settings() -> iced::window::Settings {

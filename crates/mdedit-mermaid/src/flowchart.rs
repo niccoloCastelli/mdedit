@@ -236,13 +236,33 @@ pub struct Subgraph {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     SetDirection(Direction),
-    SetLabel { id: String, label: String },
-    SetShape { id: String, shape: Shape },
-    AddNode { id: String, label: String, shape: Shape },
-    AddEdge { from: String, to: String, label: Option<String> },
+    SetLabel {
+        id: String,
+        label: String,
+    },
+    SetShape {
+        id: String,
+        shape: Shape,
+    },
+    AddNode {
+        id: String,
+        label: String,
+        shape: Shape,
+    },
+    AddEdge {
+        from: String,
+        to: String,
+        label: Option<String>,
+    },
     /// `None` or an empty label removes it.
-    SetEdgeLabel { edge: usize, label: Option<String> },
-    SetEdgeStyle { edge: usize, style: EdgeStyle },
+    SetEdgeLabel {
+        edge: usize,
+        label: Option<String>,
+    },
+    SetEdgeStyle {
+        edge: usize,
+        style: EdgeStyle,
+    },
     DeleteEdge(usize),
     DeleteNode(String),
 }
@@ -270,7 +290,10 @@ struct Stmt {
 
 #[derive(Debug, Clone)]
 enum StmtKind {
-    Header { dir: Option<Range<usize>>, keyword_end: usize },
+    Header {
+        dir: Option<Range<usize>>,
+        keyword_end: usize,
+    },
     Chain(Chain),
     SubgraphStart,
     End,
@@ -382,10 +405,7 @@ impl Flowchart {
                     direction = *d;
                 }
                 header = Some(i);
-                stmts.push(Stmt {
-                    range: s.range,
-                    kind: StmtKind::Header { dir: dir.map(|(_, r)| r), keyword_end },
-                });
+                stmts.push(Stmt { range: s.range, kind: StmtKind::Header { dir: dir.map(|(_, r)| r), keyword_end } });
                 continue;
             }
             let kind = match word {
@@ -407,7 +427,7 @@ impl Flowchart {
                 "class" => {
                     let after = &text[5..];
                     let lead = after.len() - after.trim_start().len();
-                    let ids = after.trim_start().split_whitespace().next().unwrap_or_default();
+                    let ids = after.split_whitespace().next().unwrap_or_default();
                     let at = s.range.start + 5 + lead;
                     StmtKind::Class(at..at + ids.len())
                 }
@@ -728,7 +748,9 @@ impl Flowchart {
     /// everything kept. A group left on its own is kept only when it defines
     /// a node or the node would otherwise vanish.
     fn re_emit(&self, touched: &[usize], gone: &HashSet<&str>, cut: Option<EdgeSrc>) -> Vec<(Range<usize>, String)> {
-        let plans: Vec<(usize, Vec<Vec<&NodeRef>>, Vec<Vec<usize>>)> = touched
+        // Per statement: kept refs of each group, and runs of linked groups.
+        type Plan<'a> = (usize, Vec<Vec<&'a NodeRef>>, Vec<Vec<usize>>);
+        let plans: Vec<Plan> = touched
             .iter()
             .map(|&i| {
                 let c = self.chain(i);
@@ -738,8 +760,8 @@ impl Flowchart {
                 // Runs of non-empty groups joined by surviving links.
                 let mut runs: Vec<Vec<usize>> = Vec::new();
                 let mut run: Vec<usize> = Vec::new();
-                for g in 0..groups.len() {
-                    if groups[g].is_empty() {
+                for (g, group) in groups.iter().enumerate() {
+                    if group.is_empty() {
                         runs.extend((!run.is_empty()).then(|| std::mem::take(&mut run)));
                         continue;
                     }
@@ -1168,7 +1190,8 @@ fn parse_link(c: &mut Cursor<'_>) -> Option<Link> {
     let bytes = rest.as_bytes();
     // Optional start head.
     let mut k = 0;
-    if matches!(bytes.first(), Some(b'<')) || (matches!(bytes.first(), Some(b'o' | b'x')) && matches!(bytes.get(1), Some(b'-' | b'=')))
+    if matches!(bytes.first(), Some(b'<'))
+        || (matches!(bytes.first(), Some(b'o' | b'x')) && matches!(bytes.get(1), Some(b'-' | b'=')))
     {
         k = 1;
     }
@@ -1192,7 +1215,7 @@ fn parse_link(c: &mut Cursor<'_>) -> Option<Link> {
                 if extra > 0 && matches!(c.src[end..c.end].chars().next(), Some('>' | 'o' | 'x')) {
                     end += 1;
                 }
-                let arrow = format!("{}{}", &rest[..k], &c.src[text.end..end].trim());
+                let arrow = format!("{}{}", &rest[..k], c.src[text.end..end].trim());
                 c.pos = end;
                 let text = trim_range(c.src, text);
                 return Some(Link {
@@ -1249,14 +1272,12 @@ fn parse_link(c: &mut Cursor<'_>) -> Option<Link> {
         }
         _ => return None,
     }
-    let mut head = 0;
-    if matches!(b.get(n), Some(b'>')) {
-        head = 1;
-    } else if matches!(b.get(n), Some(b'o' | b'x'))
-        && !b.get(n + 1).is_some_and(|ch| ch.is_ascii_alphanumeric() || *ch == b'_')
-    {
-        head = 1;
-    }
+    let head = match b.get(n) {
+        Some(b'>') => 1,
+        // `--o B`, not `--oB` (a node called oB).
+        Some(b'o' | b'x') if !b.get(n + 1).is_some_and(|ch| ch.is_ascii_alphanumeric() || *ch == b'_') => 1,
+        _ => 0,
+    };
     let valid = match b[0] {
         b'~' => head == 0,
         b'=' => n + head >= 3,
@@ -1414,7 +1435,10 @@ mod tests {
         let out = f.apply(&Op::AddEdge { from: "B".into(), to: "N1".into(), label: Some("go".into()) }).unwrap();
         assert_eq!(out, "flowchart TD\n    A --> B\n    N1(New)\n    B -->|go| N1\n");
         assert_eq!(f.fresh_id(), "N2");
-        assert_eq!(f.apply(&Op::AddNode { id: "A".into(), label: "x".into(), shape: Shape::Rect }), Err(EditError::Exists("A".into())));
+        assert_eq!(
+            f.apply(&Op::AddNode { id: "A".into(), label: "x".into(), shape: Shape::Rect }),
+            Err(EditError::Exists("A".into()))
+        );
         assert!(f.apply(&Op::AddNode { id: "a b".into(), label: "x".into(), shape: Shape::Rect }).is_err());
     }
 

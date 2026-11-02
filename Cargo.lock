@@ -4363,6 +4363,7 @@ dependencies = [
  "mdedit-editor",
  "mdedit-export",
  "mdedit-git",
+ "mdedit-mermaid",
  "mdedit-project",
  "mdedit-render",
  "mdedit-sidecar",

@@ -36,7 +36,14 @@ fn menu_title_width(label: &str) -> f32 {
 }
 
 impl App {
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self, window: iced::window::Id) -> Element<'_, Message> {
+        if Some(window) != self.main_window() {
+            return self.diagram_view(window);
+        }
+        self.main_view()
+    }
+
+    fn main_view(&self) -> Element<'_, Message> {
         let t = &self.theme;
         let mut middle = row![];
         if self.sidebar.visible {

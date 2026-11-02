@@ -712,7 +712,7 @@ impl<'a, Message> View<'a, Message> {
                     }
                 }
                 Action::Scroll(y) => st.echo = Some(*y),
-                Action::OpenLink(_) | Action::SelectionRect(_) | Action::CaretRect(_) => {}
+                Action::OpenLink(_) | Action::SelectionRect(_) | Action::CaretRect(_) | Action::EditDiagram(_) => {}
             }
             shell.publish((self.on_action)(action));
         }
@@ -1087,8 +1087,12 @@ impl<'a, Message> View<'a, Message> {
                         true
                     }
                     None => {
-                        if st.visible.iter().any(|v| v.layout.items.iter().any(|i| matches!(i, Item::Copy { .. })))
-                            || st.visible.iter().any(|v| v.layout.table.as_ref().is_some_and(|t| !t.toolbar.is_empty()))
+                        if st.visible.iter().any(|v| {
+                            v.layout.items.iter().any(|i| matches!(i, Item::Copy { .. } | Item::EditDiagram { .. }))
+                        }) || st
+                            .visible
+                            .iter()
+                            .any(|v| v.layout.table.as_ref().is_some_and(|t| !t.toolbar.is_empty()))
                         {
                             shell.request_redraw();
                         }
@@ -1185,6 +1189,10 @@ impl<'a, Message> View<'a, Message> {
                     Item::Copy { rect, code } if rect.contains(local) => {
                         clipboard.write(ClipboardKind::Standard, code.clone());
                         return Some(Vec::new());
+                    }
+                    Item::EditDiagram { rect, source } if rect.contains(local) => {
+                        let range = v.to_current(source.start)..v.to_current(source.end);
+                        return Some(vec![Action::EditDiagram(range)]);
                     }
                     Item::Text(t) if !t.links.is_empty() && (!editable || st.modifiers.command()) => {
                         let b = t.bounds();
@@ -1477,6 +1485,21 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                                 r.draw_svg(svg, pad(rect, -1.5), bounds);
                             }
                         }
+                        Item::EditDiagram { rect, .. } => {
+                            if hovered && let Some(icon) = mdedit_theme::icon("pencil") {
+                                let rect = *rect + origin;
+                                let over = hover.is_some_and(|p| rect.contains(p + Vector::new(bounds.x, bounds.y)));
+                                let border = Border {
+                                    color: if over { c.accent } else { c.border_strong },
+                                    width: 1.0,
+                                    radius: space::RADIUS_MD.into(),
+                                };
+                                quad(r, rect, c.surface, border);
+                                let color = if over { c.accent } else { c.secondary };
+                                let svg = adv_svg::Svg::new(adv_svg::Handle::from_memory(icon)).color(color);
+                                r.draw_svg(svg, pad(rect, -5.0), bounds);
+                            }
+                        }
                         Item::Copy { rect, .. } => {
                             if hovered
                                 && self.editable() | self.state.read_only
@@ -1600,7 +1623,9 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for View<'_, Message>
                     Item::Check { rect, .. } if editable && pad(*rect, 4.0).contains(local) => {
                         return mouse::Interaction::Pointer;
                     }
-                    Item::Copy { rect, .. } if rect.contains(local) => return mouse::Interaction::Pointer,
+                    Item::Copy { rect, .. } | Item::EditDiagram { rect, .. } if rect.contains(local) => {
+                        return mouse::Interaction::Pointer;
+                    }
                     Item::Text(t)
                         if !t.links.is_empty()
                             && (!editable || st.modifiers.command())

@@ -87,6 +87,9 @@ pub enum Action {
     /// it changes (for the floating format toolbar). `None` when the
     /// selection is empty, scrolled away or the view is not focused.
     SelectionRect(Option<iced::Rectangle>),
+    /// The "Edit diagram" button of a Mermaid block was clicked; the range
+    /// is the whole fenced block in the current document.
+    EditDiagram(std::ops::Range<usize>),
     /// Window-space caret rectangle, sent when it changes while
     /// [`ViewState::report_caret`] is on.
     CaretRect(Option<iced::Rectangle>),
