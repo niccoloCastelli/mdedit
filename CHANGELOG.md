@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.3.0 (2026-11-03)
+
+### Features
+
+- **Visual Mermaid editor:** hover a rendered diagram in View, Split or
+  Read mode and click the pencil button to edit it in its own window.
+  Flowcharts get a canvas: drag nodes, double-click empty space to add a
+  node, drag a node's dot (or Shift+drag) to connect it to another node or
+  to a new one, double-click to rename, Delete to remove. The side panel
+  sets the label, one of 14 node shapes, the flowchart direction, and a
+  connection's label, line (solid, dotted, thick, hidden) and ends. A live
+  preview and the editable source sit next to the canvas, with undo and
+  redo inside the window.
+- **Your source stays yours:** each change rewrites only the statements
+  it touches, so comments, `classDef`/`style` lines, spacing and the way
+  you write arrows survive. Save (Ctrl+Enter) puts the code back between
+  the fences as one step that Ctrl+Z undoes in the document; Ctrl+S saves
+  and keeps editing. Closing with unsaved changes asks first.
+- Other diagram types (sequence, class, state, pie, ...) open as source
+  with a live preview.
+
+### Known limitations
+
+- Node positions on the canvas are only for editing: Mermaid has no
+  syntax for them, so the rendered diagram is always laid out
+  automatically, and positions are not kept after the window closes.
+- Subgraphs are shown and kept but not edited on the canvas (new nodes go
+  outside them); `linkStyle` indexes are not renumbered when an edge is
+  deleted; `A@{ shape: ... }` nodes are kept but shown as rectangles.
+- Changing one edge of a grouped statement (`A & B --> C`) splits that
+  statement into one line per edge.
+- Expanding a folder in the file tree still reads it on the UI thread, so a
+  very slow folder can pause the window briefly.
+- Only Linux is built and tested; macOS and Windows have no release builds.
+- Math is not rendered yet.
+- Git: no branch merge or conflict resolution, pull is fast-forward only,
+  and push needs a `--features push` build (the .deb is built without it).
+- No settings dialog: settings, keymap and themes are TOML files.
+
 ## v0.2.3 (2026-11-02)
 
 ### Features
