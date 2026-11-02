@@ -129,29 +129,83 @@ pub fn export(
     options: &ExportOptions,
     format: ExportFormat,
 ) -> Result<Vec<u8>, ExportError> {
+    match format {
+        ExportFormat::Pdf => pdf_world(markdown, base_dir, template, options)?.compile_pdf(),
+        ExportFormat::Docx => {
+            let mut settings = Settings::new(template, options)?;
+            let doc = settings.doc(markdown, options);
+            docx::pack(&doc, &settings, &mut |url| read_image(base_dir, url))
+        }
+    }
+}
+
+/// One rendered page of a [`preview`]: premultiplied RGBA, opaque.
+#[derive(Debug, Clone)]
+pub struct PreviewPage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Preview {
+    /// The first `max_pages` pages.
+    pub pages: Vec<PreviewPage>,
+    /// Pages in the whole document.
+    pub page_count: usize,
+}
+
+/// The PDF layout rendered to images, for the export dialog's preview.
+/// `pixel_per_pt` sets the resolution (A4 is 595 pt wide). DOCX has no
+/// layout engine of its own here; the PDF pages are a close stand-in.
+pub fn preview(
+    markdown: &str,
+    base_dir: &Path,
+    template: &Template,
+    options: &ExportOptions,
+    max_pages: usize,
+    pixel_per_pt: f32,
+) -> Result<Preview, ExportError> {
+    let document = pdf_world(markdown, base_dir, template, options)?.compile()?;
+    let render = typst_render::RenderOptions {
+        pixel_per_pt: typst::utils::Scalar::from(f64::from(pixel_per_pt)),
+        ..Default::default()
+    };
+    let pages = document
+        .pages()
+        .iter()
+        .take(max_pages)
+        .map(|page| {
+            let pixmap = typst_render::render(page, &render);
+            PreviewPage { width: pixmap.width(), height: pixmap.height(), rgba: pixmap.take() }
+        })
+        .collect();
+    Ok(Preview { pages, page_count: document.pages().len() })
+}
+
+/// Settings, document tree, generated Typst and images, ready to compile.
+fn pdf_world(
+    markdown: &str,
+    base_dir: &Path,
+    template: &Template,
+    options: &ExportOptions,
+) -> Result<pdf::ExportWorld, ExportError> {
     let mut settings = Settings::new(template, options)?;
     let doc = settings.doc(markdown, options);
-    match format {
-        ExportFormat::Pdf => {
-            let mut images = ImageResolver::new(base_dir);
-            let mut diagrams = diagram::Diagrams::new(&settings.template.code_theme);
-            let images = std::cell::RefCell::new(&mut images);
-            let files =
-                typst_markup::convert(&doc, &settings, &mut |url| images.borrow_mut().resolve(url), &mut |src| {
-                    let d = diagrams.get(src)?;
-                    let path = images.borrow_mut().add_bytes("svg", d.svg.clone());
-                    Some((path, Some(d.width * diagram::PT_PER_PX)))
-                });
-            let images = images.into_inner();
-            let fonts = template_fonts(template);
-            let today = jiff::civil::Date::strptime("%Y-%m-%d", &settings.date)
-                .ok()
-                .map(|d| (i32::from(d.year()), d.month() as u8, d.day() as u8));
-            let world = pdf::ExportWorld::new(&files, template.typst(), &images.files, &fonts, today);
-            world.compile_pdf()
-        }
-        ExportFormat::Docx => docx::pack(&doc, &settings, &mut |url| read_image(base_dir, url)),
-    }
+    let mut images = ImageResolver::new(base_dir);
+    let mut diagrams = diagram::Diagrams::new(&settings.template.code_theme);
+    let images = std::cell::RefCell::new(&mut images);
+    let files = typst_markup::convert(&doc, &settings, &mut |url| images.borrow_mut().resolve(url), &mut |src| {
+        let d = diagrams.get(src)?;
+        let path = images.borrow_mut().add_bytes("svg", d.svg.clone());
+        Some((path, Some(d.width * diagram::PT_PER_PX)))
+    });
+    let images = images.into_inner();
+    let fonts = template_fonts(template);
+    let today = jiff::civil::Date::strptime("%Y-%m-%d", &settings.date)
+        .ok()
+        .map(|d| (i32::from(d.year()), d.month() as u8, d.day() as u8));
+    Ok(pdf::ExportWorld::new(&files, template.typst(), &images.files, &fonts, today))
 }
 
 /// [`export`] written to `out` through a temporary file and a rename, so

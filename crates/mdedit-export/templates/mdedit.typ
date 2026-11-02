@@ -42,25 +42,45 @@
   upper(body),
 )
 
+// Page header / footer: `parts` is (left, centre, right) content, `st` the
+// style dictionary from template.toml (logo, logo-pos, logo-height, fill,
+// size, font, weight, rule). The rule sits between it and the body.
+#let running(parts, st, top: true) = {
+  let st = if st == none {
+    (logo: none, logo-pos: "left", logo-height: 8mm, fill: conf.text-muted, size: 0.8em, font: conf.font-body,
+     weight: "regular", rule: false)
+  } else { st }
+  if parts == (none, none, none) and st.logo == none { return none }
+  set text(size: st.size, fill: st.fill, font: st.font, weight: st.weight)
+  let slots = ((left, "left"), (center, "center"), (right, "right"))
+  let cells = range(3).map(i => {
+    let body = parts.at(i)
+    let (dir, pos) = slots.at(i)
+    let cell = if st.logo != none and st.logo-pos == pos {
+      let logo = image(st.logo, height: st.logo-height)
+      if body == none { logo } else if pos == "right" {
+        grid(columns: 2, column-gutter: 0.6em, align: horizon, body, logo)
+      } else {
+        grid(columns: 2, column-gutter: 0.6em, align: horizon, logo, body)
+      }
+    } else { body }
+    align(dir + horizon, cell)
+  })
+  let row = grid(columns: (1fr, auto, 1fr), column-gutter: 0.8em, ..cells)
+  if st.rule {
+    let line = (paint: conf.border, thickness: 0.5pt)
+    if top { block(width: 100%, inset: (bottom: 0.5em), stroke: (bottom: line), row) }
+    else { block(width: 100%, inset: (top: 0.5em), stroke: (top: line), row) }
+  } else { row }
+}
+
 #let md-document(body) = {
   set document(title: conf.title)
   set page(
     paper: conf.paper,
     margin: conf.margin,
-    header: if conf.header != (none, none, none) {
-      set text(size: 0.8em, fill: conf.text-muted)
-      grid(
-        columns: (1fr, auto, 1fr),
-        align(left, conf.header.at(0)), align(center, conf.header.at(1)), align(right, conf.header.at(2)),
-      )
-    },
-    footer: if conf.footer != (none, none, none) {
-      set text(size: 0.8em, fill: conf.text-muted)
-      grid(
-        columns: (1fr, auto, 1fr),
-        align(left, conf.footer.at(0)), align(center, conf.footer.at(1)), align(right, conf.footer.at(2)),
-      )
-    },
+    header: running(conf.header, conf.at("header-style", default: none), top: true),
+    footer: running(conf.footer, conf.at("footer-style", default: none), top: false),
   )
   set text(font: conf.font-body, size: conf.size, fill: conf.text, lang: "en")
   set par(leading: (conf.line-height - 1) * 1em + 0.2em, spacing: 1.1em, justify: report)

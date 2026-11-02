@@ -55,6 +55,106 @@ pub enum NumberStyle {
     Guide,
 }
 
+/// Horizontal slot of a header/footer element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl HAlign {
+    pub const ALL: [HAlign; 3] = [HAlign::Left, HAlign::Center, HAlign::Right];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HAlign::Left => "left",
+            HAlign::Center => "center",
+            HAlign::Right => "right",
+        }
+    }
+}
+
+/// A page header or footer. In `template.toml` it is either a plain
+/// string (the `text`) or a table with these keys:
+///
+/// ```toml
+/// [header]
+/// text = "{title} | | {date}"
+/// logo = "logo.png"          # relative to the template directory
+/// logo_position = "left"     # left | center | right
+/// logo_height_mm = 8.0
+/// color = "#716D68"          # empty: colors.text_muted
+/// size_pt = 8.0              # 0: 80 % of base_size_pt
+/// font = ""                  # empty: font_body
+/// bold = false
+/// rule = true                # hairline between it and the body
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Running {
+    /// Placeholders: `{title}`, `{page}`, `{pages}`, `{date}`. Split into
+    /// left, centre and right parts with `|`; a single part is centred.
+    pub text: String,
+    /// Image file (PNG, JPEG, SVG); relative paths are resolved against
+    /// the template directory. Empty: no logo.
+    pub logo: String,
+    pub logo_position: HAlign,
+    pub logo_height_mm: f32,
+    pub color: String,
+    pub size_pt: f32,
+    pub font: String,
+    pub bold: bool,
+    pub rule: bool,
+}
+
+impl Default for Running {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            logo: String::new(),
+            logo_position: HAlign::Left,
+            logo_height_mm: 8.0,
+            color: String::new(),
+            size_pt: 0.0,
+            font: String::new(),
+            bold: false,
+            rule: false,
+        }
+    }
+}
+
+impl Running {
+    pub fn text(text: &str) -> Self {
+        Self { text: text.into(), ..Self::default() }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.trim().is_empty() && self.logo.is_empty()
+    }
+
+    /// Font size in points for a template's base size.
+    pub fn size(&self, base_pt: f32) -> f32 {
+        if self.size_pt > 0.0 { self.size_pt } else { base_pt * 0.8 }
+    }
+}
+
+/// `header = "text"` or a `[header]` table.
+fn running<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Running, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        Text(String),
+        Full(Running),
+    }
+    Ok(match Repr::deserialize(d)? {
+        Repr::Text(text) => Running::text(&text),
+        Repr::Full(r) => r,
+    })
+}
+
 /// Colours other than the accent, as `#RRGGBB`. Defaults are Ember Light
 /// (DESIGN_SYSTEM 2.2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,10 +214,11 @@ pub struct Template {
     pub eyebrow: String,
     /// Style the first paragraph after the title as a lead paragraph.
     pub lead: bool,
-    /// Placeholders: `{title}`, `{page}`, `{pages}`, `{date}`. Split into
-    /// left, centre and right parts with `|`; a single part is centred.
-    pub header: String,
-    pub footer: String,
+    /// See [`Running`]; a plain string is the text.
+    #[serde(deserialize_with = "running")]
+    pub header: Running,
+    #[serde(deserialize_with = "running")]
+    pub footer: Running,
     /// Built-in mdedit theme whose `[code]` colours highlight code blocks
     /// (`ember-light`, `ember-dark`).
     pub code_theme: String,
@@ -150,8 +251,8 @@ impl Default for Template {
             toc: false,
             eyebrow: String::new(),
             lead: false,
-            header: String::new(),
-            footer: "{page}".into(),
+            header: Running::default(),
+            footer: Running::text("{page}"),
             code_theme: "ember-light".into(),
             typst_source: None,
             dir: None,
@@ -215,6 +316,26 @@ impl Template {
         self.typst_source.as_deref().unwrap_or(BUILTIN_TYPST)
     }
 
+    /// The logo file of a header or footer: absolute, or relative to the
+    /// template directory (built-ins have none, so relative logos there
+    /// resolve against the current directory and usually don't exist).
+    pub fn logo_path(&self, r: &Running) -> Option<PathBuf> {
+        if r.logo.trim().is_empty() {
+            return None;
+        }
+        let path = Path::new(r.logo.trim());
+        Some(match &self.dir {
+            Some(dir) if path.is_relative() => dir.join(path),
+            _ => path.to_path_buf(),
+        })
+    }
+
+    /// `template.toml` text for this template (used by the template
+    /// editor).
+    pub fn to_toml(&self) -> Result<String, ExportError> {
+        toml::to_string_pretty(self).map_err(|e| ExportError::Template(e.to_string()))
+    }
+
     pub fn heading_font(&self) -> &str {
         if self.font_heading.is_empty() { &self.font_body } else { &self.font_heading }
     }
@@ -235,6 +356,14 @@ impl Template {
         ] {
             if parse_hex(value).is_none() {
                 return Err(ExportError::Template(format!("{field}: {value:?} is not a #RRGGBB colour")));
+            }
+        }
+        for (field, r) in [("header", &self.header), ("footer", &self.footer)] {
+            if !r.color.is_empty() && parse_hex(&r.color).is_none() {
+                return Err(ExportError::Template(format!("{field}.color: {:?} is not a #RRGGBB colour", r.color)));
+            }
+            if !(r.logo_height_mm > 0.0 && r.size_pt >= 0.0) {
+                return Err(ExportError::Template(format!("{field}: logo_height_mm and size_pt must be positive")));
             }
         }
         if !(self.base_size_pt > 0.0 && self.line_height > 0.0) {
@@ -290,6 +419,27 @@ mod tests {
         assert_eq!(t.colors.text, "#000000");
         assert_eq!(t.colors.border, Colors::default().border);
         assert_eq!(t.page_size, "a4");
+    }
+
+    #[test]
+    fn header_and_footer_as_string_or_table() {
+        let t = Template::from_toml("header = \"{title}\"\n[footer]\ntext = \"{page}\"\nlogo = \"logo.png\"\nlogo_position = \"right\"\ncolor = \"#112233\"\nsize_pt = 7.5\nrule = true\n").unwrap();
+        assert_eq!(t.header, Running::text("{title}"));
+        assert_eq!(t.footer.logo_position, HAlign::Right);
+        assert_eq!((t.footer.size(10.0), t.header.size(10.0)), (7.5, 8.0));
+        assert!(t.footer.rule && !t.footer.bold);
+        assert_eq!(t.logo_path(&t.footer), Some(PathBuf::from("logo.png")));
+        assert!(Template::from_toml("[header]\ncolor = \"red\"").is_err());
+        assert!(Template::from_toml("[header]\nlogo_height_mm = 0").is_err());
+    }
+
+    #[test]
+    fn toml_round_trip() {
+        for mut t in Template::builtins() {
+            t.header = Running { logo: "logo.svg".into(), rule: true, ..Running::text("{title} | | {date}") };
+            let back = Template::from_toml(&t.to_toml().unwrap()).unwrap();
+            assert_eq!(back, t);
+        }
     }
 
     #[test]

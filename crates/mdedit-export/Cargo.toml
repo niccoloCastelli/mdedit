@@ -19,7 +19,10 @@ docx-rs.workspace = true
 syntect.workspace = true
 jiff.workspace = true
 typst-layout.workspace = true
+typst-render.workspace = true
 image.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Same version docx-rs writes with; reads the packed DOCX in tests.
+zip = { version = "8", default-features = false, features = ["deflate"] }

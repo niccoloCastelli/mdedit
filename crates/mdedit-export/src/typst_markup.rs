@@ -40,7 +40,7 @@ pub fn convert(
     image: &mut dyn FnMut(&str) -> Option<String>,
     diagram: &mut DiagramLoader,
 ) -> TypstFiles {
-    let conf = conf(doc, s);
+    let conf = conf(doc, s, image);
     let mut w = Writer {
         out: String::new(),
         slugs: doc.slugs(),
@@ -89,7 +89,7 @@ pub fn convert(
     TypstFiles { conf, main }
 }
 
-fn conf(doc: &Doc, s: &Settings) -> String {
+fn conf(doc: &Doc, s: &Settings, image: &mut dyn FnMut(&str) -> Option<String>) -> String {
     let t = &s.template;
     let title = doc.title_text(&s.title);
     let paper = page_size_mm(&t.page_size).map(|p| p.2).unwrap_or("a4");
@@ -134,10 +134,35 @@ fn conf(doc: &Doc, s: &Settings) -> String {
     field("title", string(&title));
     field("date", string(&s.date));
     field("eyebrow", placeholders(&t.eyebrow, &title, &s.date));
-    field("header", parts(&t.header, &title, &s.date));
-    field("footer", parts(&t.footer, &title, &s.date));
+    field("header", parts(&t.header.text, &title, &s.date));
+    field("footer", parts(&t.footer.text, &title, &s.date));
+    for (name, r) in [("header-style", &t.header), ("footer-style", &t.footer)] {
+        let logo = t.logo_path(r).and_then(|p| image(&p.to_string_lossy()));
+        let fill = if r.color.is_empty() { &c.text_muted } else { &r.color };
+        let font = if r.font.is_empty() { &t.font_body } else { &r.font };
+        field(
+            name,
+            format!(
+                "(logo: {}, logo-pos: {}, logo-height: {}mm, fill: {}, size: {}pt, font: {}, weight: {}, rule: {})",
+                logo.map_or_else(|| "none".into(), |p| string(&p)),
+                string(r.logo_position.as_str()),
+                num(r.logo_height_mm),
+                color(fill),
+                num(r.size(t.base_size_pt)),
+                string(font),
+                string(if r.bold { "bold" } else { "regular" }),
+                r.rule,
+            ),
+        );
+    }
     out.push_str(")\n");
     out
+}
+
+/// A length for Typst without float noise (`8.400001` → `8.4`).
+fn num(x: f32) -> String {
+    let s = format!("{x:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 /// Header/footer text as a `(left, centre, right)` array of content.

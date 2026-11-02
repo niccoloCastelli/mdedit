@@ -27,6 +27,8 @@
   eyebrow: none,
   header: (none, none, none),
   footer: ([Off-ramp stablecoins to a bank], none, [#context counter(page).display() / #context counter(page).final().first()]),
+  header-style: (logo: none, logo-pos: "left", logo-height: 8mm, fill: rgb("#716d68"), size: 8.4pt, font: "Hanken Grotesk", weight: "regular", rule: false),
+  footer-style: (logo: none, logo-pos: "left", logo-height: 8mm, fill: rgb("#716d68"), size: 8.4pt, font: "Hanken Grotesk", weight: "regular", rule: false),
 )
 
 // ---- main.typ
