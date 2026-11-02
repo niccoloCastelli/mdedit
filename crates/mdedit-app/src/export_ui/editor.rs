@@ -1,8 +1,8 @@
 //! Template editor (SPEC 10): the export dialog's left pane turns into a
 //! form over a working copy of the selected template. Every change goes to
-//! the live preview; "Save template" writes `<dir>/<slug>/template.toml`
-//! into the project's or the global templates folder, copying logos next
-//! to it.
+//! the live preview; "Save" writes `<dir>/<slug>/template.toml` into the
+//! project's or the global templates folder, copying logos next to it, and
+//! "Save as…" writes a copy under a new name.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -75,7 +75,15 @@ pub enum EditorMsg {
     LogoPicked(Part, Option<PathBuf>),
     SaveTo(Scope),
     Save,
+    /// Opens the name prompt for a copy.
+    SaveAs,
+    SaveAsName(String),
+    SaveAsCancel,
+    SaveAsConfirm,
 }
+
+/// The name prompt's input, focused when it opens.
+pub const SAVE_AS_INPUT: &str = "export-save-as";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -90,6 +98,8 @@ pub struct TemplateEditor {
     inputs: HashMap<Field, String>,
     pub scope: Scope,
     pub error: Option<String>,
+    /// The new name while "Save as…" is open.
+    pub save_as: Option<String>,
 }
 
 impl TemplateEditor {
@@ -99,6 +109,7 @@ impl TemplateEditor {
             inputs: HashMap::new(),
             scope: if project { Scope::Project } else { Scope::Global },
             error: None,
+            save_as: None,
         }
     }
 
@@ -216,7 +227,24 @@ impl TemplateEditor {
                 self.scope = *scope;
                 false
             }
-            EditorMsg::LogoPicked(_, None) | EditorMsg::BrowseLogo(_) | EditorMsg::Save => false,
+            EditorMsg::SaveAs => {
+                self.save_as = Some(format!("{} copy", self.draft.name));
+                self.error = None;
+                false
+            }
+            EditorMsg::SaveAsName(name) => {
+                self.save_as = Some(name.clone());
+                self.error = None;
+                false
+            }
+            EditorMsg::SaveAsCancel => {
+                self.save_as = None;
+                self.error = None;
+                false
+            }
+            EditorMsg::LogoPicked(_, None) | EditorMsg::BrowseLogo(_) | EditorMsg::Save | EditorMsg::SaveAsConfirm => {
+                false
+            }
         }
     }
 
@@ -609,6 +637,17 @@ pub fn view<'a>(t: &'a Theme, e: &'a TemplateEditor, project: Option<&'a Path>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_as_prompt() {
+        let mut e = TemplateEditor::new(&Template::builtin("guide").unwrap(), false);
+        assert!(!e.update(&EditorMsg::SaveAs));
+        assert_eq!(e.save_as.as_deref(), Some("Guide copy"));
+        e.update(&EditorMsg::SaveAsName("Acme".into()));
+        assert_eq!(e.save_as.as_deref(), Some("Acme"));
+        e.update(&EditorMsg::SaveAsCancel);
+        assert_eq!(e.save_as, None);
+    }
 
     #[test]
     fn edits_apply_when_valid() {

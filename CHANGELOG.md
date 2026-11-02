@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.3 (2026-11-02)
+
+### Features
+
+- **Export preview:** the export dialog shows the rendered PDF pages next
+  to the options and updates them as you change the template or options.
+  DOCX exports show the same layout, with a note that Word may differ
+  slightly.
+- **Header and footer styling:** a template's header and footer can now
+  carry a logo (PNG, JPEG or SVG; left, centre or right; height in mm), a
+  colour, a font size, a font, bold text and a thin rule. This works in
+  both PDF and DOCX. The plain `header = "left | centre | right"` string
+  still works.
+- **Template editor:** "Edit template…" in the export dialog edits page
+  size, margins, fonts, colours, heading options, header and footer with a
+  live preview. Save writes the template to the project or to all
+  documents and copies its logo next to it; Save as… writes a copy under
+  a new name.
+
+### Known limitations
+
+- The preview always shows the PDF layout, also for DOCX exports.
+- In DOCX the header logo sits on the text baseline rather than centred.
+- Expanding a folder in the file tree still reads it on the UI thread, so a
+  very slow folder can pause the window briefly.
+- Only Linux is built and tested; macOS and Windows have no release builds.
+- Math is not rendered yet.
+- Git: no branch merge or conflict resolution, pull is fast-forward only,
+  and push needs a `--features push` build (the .deb is built without it).
+- No settings dialog: settings, keymap and themes are TOML files.
+
 ## v0.2.2 (2026-11-02)
 
 ### Features

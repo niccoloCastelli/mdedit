@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{Key, key::Named};
-use iced::widget::{Space, button, checkbox, column, container, opaque, row, scrollable, text};
+use iced::widget::{Space, button, checkbox, column, container, opaque, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Subscription, Task};
 use mdedit_core::TextBuffer;
 use mdedit_export::{ExportComment, ExportFormat, ExportOptions, Template};
@@ -591,14 +591,29 @@ impl App {
                     move |path| Message::Export(ExportMsg::Editor(EditorMsg::LogoPicked(part, path))),
                 );
             }
-            EditorMsg::Save => {
-                let draft = match e.valid() {
+            EditorMsg::Save | EditorMsg::SaveAsConfirm => {
+                let mut draft = match e.valid() {
                     Ok(t) => t.clone(),
                     Err(err) => {
                         e.error = Some(err);
                         return Task::none();
                     }
                 };
+                if matches!(msg, EditorMsg::SaveAsConfirm) {
+                    let name = e.save_as.as_deref().unwrap_or_default().trim().to_string();
+                    if name.is_empty() {
+                        e.error = Some("Give the new template a name".into());
+                        return Task::none();
+                    }
+                    // A copy never replaces another template, built-ins included.
+                    let taken = d.choices.iter().any(|c| editor::slug(&c.template.name) == editor::slug(&name))
+                        || target.join(editor::slug(&name)).exists();
+                    if taken {
+                        e.error = Some(format!("A template named {name} already exists"));
+                        return Task::none();
+                    }
+                    draft.name = name;
+                }
                 match editor::save(&draft, &target) {
                     Ok(dir) => {
                         let (choices, warnings) = template_choices(project_templates.as_deref(), &global);
@@ -615,6 +630,10 @@ impl App {
                     Err(err) => e.error = Some(format!("Could not save: {err}")),
                 }
             }
+            EditorMsg::SaveAs => {
+                e.update(&msg);
+                return iced::widget::operation::focus(editor::SAVE_AS_INPUT);
+            }
             msg => {
                 if e.update(&msg) {
                     d.preview.invalidate();
@@ -627,8 +646,15 @@ impl App {
     /// Keys while the export dialog is open: Esc cancels, Enter exports,
     /// everything else is swallowed like the other dialogs do.
     pub(crate) fn export_key(&mut self, key: &Key) -> Option<Task<Message>> {
-        let editing = self.export.dialog.as_ref()?.editor.is_some();
+        let editor = self.export.dialog.as_ref()?.editor.as_ref();
+        let editing = editor.is_some();
+        let naming = editor.is_some_and(|e| e.save_as.is_some());
         Some(match key {
+            // Enter is handled here, not by the input's on_submit: the key
+            // event reaches this handler after the widget's, and by then
+            // the saved editor is closed and Enter would start an export.
+            Key::Named(Named::Enter) if naming => self.on_export(ExportMsg::Editor(EditorMsg::SaveAsConfirm)),
+            Key::Named(Named::Escape) if naming => self.on_export(ExportMsg::Editor(EditorMsg::SaveAsCancel)),
             Key::Named(Named::Escape) if editing => self.on_export(ExportMsg::CloseEditor),
             Key::Named(Named::Escape) => self.on_export(ExportMsg::Cancel),
             // In the editor Enter belongs to its text inputs.
@@ -685,15 +711,33 @@ impl App {
         let ex = |m: ExportMsg| Message::Export(m);
 
         let (heading, body, mut actions): (String, Element<'a, Message>, Vec<Element<'a, Message>>) = match &d.editor {
-            Some(e) => (
-                "Edit template".into(),
-                editor::view(t, e, d.project.as_deref()),
-                vec![
-                    small_button(t, "Back", Btn::Secondary, Some(ex(ExportMsg::CloseEditor))),
-                    Space::new().width(Length::Fill).into(),
-                    small_button(t, "Save template", Btn::Secondary, Some(ex(ExportMsg::Editor(EditorMsg::Save)))),
-                ],
-            ),
+            Some(e) => {
+                let ed = |m: EditorMsg| Some(ex(ExportMsg::Editor(m)));
+                let actions = match &e.save_as {
+                    // The name prompt takes the whole row; Export… waits.
+                    Some(name) => {
+                        let field = text_input("New template name", name)
+                            .id(editor::SAVE_AS_INPUT)
+                            .on_input(|v| Message::Export(ExportMsg::Editor(EditorMsg::SaveAsName(v))))
+                            .size(UI)
+                            .padding(Padding::from([SPACE_1, SPACE_2]))
+                            .style(style::input(t))
+                            .width(Length::Fill);
+                        vec![
+                            field.into(),
+                            small_button(t, "Cancel", Btn::Secondary, ed(EditorMsg::SaveAsCancel)),
+                            small_button(t, "Save copy", Btn::Primary, ed(EditorMsg::SaveAsConfirm)),
+                        ]
+                    }
+                    None => vec![
+                        small_button(t, "Back", Btn::Secondary, Some(ex(ExportMsg::CloseEditor))),
+                        Space::new().width(Length::Fill).into(),
+                        small_button(t, "Save as…", Btn::Secondary, ed(EditorMsg::SaveAs)),
+                        small_button(t, "Save", Btn::Secondary, ed(EditorMsg::Save)),
+                    ],
+                };
+                ("Edit template".into(), editor::view(t, e, d.project.as_deref()), actions)
+            }
             None => (
                 format!("Export as {label}"),
                 self.export_options(d),
@@ -703,14 +747,28 @@ impl App {
                 ],
             ),
         };
-        actions.push(small_button(t, "Export…", Btn::Primary, Some(ex(ExportMsg::Confirm))));
+        if d.editor.as_ref().is_none_or(|e| e.save_as.is_none()) {
+            actions.push(small_button(t, "Export…", Btn::Primary, Some(ex(ExportMsg::Confirm))));
+        }
 
         let side = column![
             column![text(heading).size(16).font(bold()), text(title).size(UI).color(c(t, T::TextSecondary))]
                 .spacing(SPACE_1),
             container(body).height(Length::Fill),
-            row(actions).spacing(SPACE_2).align_y(Alignment::Center),
         ]
+        // The name prompt's errors show under it, not in the scrolled form;
+        // after the row, so the input keeps its place (and its focus).
+        .push(
+            column![row(actions).spacing(SPACE_2).align_y(Alignment::Center)]
+                .push(
+                    d.editor
+                        .as_ref()
+                        .filter(|e| e.save_as.is_some())
+                        .and_then(|e| e.error.as_ref())
+                        .map(|err| text(err.clone()).size(UI_SMALL).color(c(t, T::Danger))),
+                )
+                .spacing(SPACE_1),
+        )
         .spacing(SPACE_4)
         .padding(SPACE_5)
         .width(SIDE_WIDTH)
