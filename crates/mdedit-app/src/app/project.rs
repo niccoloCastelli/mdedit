@@ -79,16 +79,34 @@ pub struct DiffLine {
     pub text: String,
 }
 
-/// What opening a folder found, built off the UI thread.
+/// What opening a folder found, built off the UI thread (a folder on a
+/// network or cloud drive can take seconds to read and to watch).
 pub struct Opened {
     project: Project,
     tree: FileTree,
     repo: Option<Author>,
+    watcher: Option<ProjectWatcher>,
+    watch_error: Option<String>,
+    events: mpsc::UnboundedReceiver<Vec<ProjectEvent>>,
 }
+
+/// A folder being opened. The loader shows after `LOADER_DELAY`.
+pub struct Loading {
+    pub dir: PathBuf,
+    id: u64,
+    pub shown: bool,
+    pub started: Instant,
+}
+
+const LOADER_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    Opened(Result<Handoff<Opened>, String>),
+    /// A load finished: its id, and `None` when the folder is not a project.
+    Opened(u64, Result<Option<Handoff<Opened>>, String>),
+    LoadingShow(u64),
+    LoadingTick,
+    CancelLoading,
     Click(PathBuf),
     Fs(Vec<ProjectEvent>),
     Autocommit(AutocommitEvent),
@@ -162,12 +180,30 @@ pub const PROMPT_INPUT: &str = "project-prompt";
 impl App {
     pub(super) fn on_project(&mut self, msg: Msg) -> Task<Message> {
         match msg {
-            Msg::Opened(Ok(opened)) => {
-                if let Some(o) = opened.take() {
-                    return self.project_opened(o);
+            Msg::Opened(id, result) => {
+                // A cancelled or superseded load is dropped (with its watcher).
+                let Some(loading) = self.project_loading.take_if(|l| l.id == id) else { return Task::none() };
+                match result {
+                    Ok(Some(opened)) => {
+                        if let Some(o) = opened.take() {
+                            return self.project_opened(o);
+                        }
+                    }
+                    Ok(None) => self.ask_make_project(loading.dir),
+                    Err(e) => self.toast_error(format!("Could not open {}: {e}", loading.dir.display())),
                 }
             }
-            Msg::Opened(Err(e)) => self.toast_error(format!("Could not open the folder: {e}")),
+            Msg::LoadingShow(id) => {
+                if let Some(l) = &mut self.project_loading
+                    && l.id == id
+                {
+                    l.shown = true;
+                    self.sidebar.visible = true;
+                    self.sidebar.tab = SidebarTab::Files;
+                }
+            }
+            Msg::LoadingTick => {}
+            Msg::CancelLoading => self.project_loading = None,
             Msg::Click(path) => return self.tree_click(path),
             Msg::Fs(events) => {
                 if let Some(p) = &mut self.project {
@@ -314,38 +350,46 @@ impl App {
         if self.project_root().is_some_and(|r| r != dir) {
             return self.close_project_then(Some(dir));
         }
-        if !Project::is_project(&dir) {
-            let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            self.prompt = Some(Prompt {
-                kind: PromptKind::MakeProject(dir),
-                title: format!("Make {name} a project?"),
-                body: "This adds a .mdedit folder with the project settings and, if there is none yet, a git \
-                       repository so every save is versioned."
-                    .into(),
-                input: None,
-                input2: None,
-                confirm: "Make project",
-                danger: false,
-            });
+        if self.project_loading.as_ref().is_some_and(|l| l.dir == dir) {
             return Task::none();
         }
-        load_project(dir, false)
+        self.start_loading(dir, false)
+    }
+
+    /// Open (or, with `create`, make) a project off the UI thread.
+    fn start_loading(&mut self, dir: PathBuf, create: bool) -> Task<Message> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.project_loading = Some(Loading { dir: dir.clone(), id, shown: false, started: Instant::now() });
+        Task::batch([
+            load_project(id, dir, create),
+            Task::perform(tokio::time::sleep(LOADER_DELAY), move |_| Message::Project(Msg::LoadingShow(id))),
+        ])
+    }
+
+    fn ask_make_project(&mut self, dir: PathBuf) {
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.prompt = Some(Prompt {
+            kind: PromptKind::MakeProject(dir),
+            title: format!("Make {name} a project?"),
+            body: "This adds a .mdedit folder with the project settings and, if there is none yet, a git \
+                   repository so every save is versioned."
+                .into(),
+            input: None,
+            input2: None,
+            confirm: "Make project",
+            danger: false,
+        });
     }
 
     fn project_opened(&mut self, o: Opened) -> Task<Message> {
         self.close_project();
         let root = o.project.root.clone();
-        let (tx, rx) = mpsc::unbounded();
-        let watcher = match o.project.watch(move |events| {
-            let _ = tx.unbounded_send(events);
-        }) {
-            Ok(w) => Some(w),
-            Err(e) => {
-                self.toast_error(format!("Not watching the folder for changes: {e}"));
-                None
-            }
-        };
-        let mut tasks = vec![Task::run(rx, |e| Message::Project(Msg::Fs(e)))];
+        if let Some(e) = o.watch_error {
+            self.toast_error(format!("Not watching the folder for changes: {e}"));
+        }
+        let watcher = o.watcher;
+        let mut tasks = vec![Task::run(o.events, |e| Message::Project(Msg::Fs(e)))];
         let has_git = o.repo.is_some();
         let author = o.repo.unwrap_or_else(|| Author { name: "mdedit".into(), email: "mdedit@localhost".into() });
         let git = &o.project.config.git;
@@ -591,7 +635,7 @@ impl App {
     fn submit_prompt(&mut self, kind: PromptKind, value: String, value2: String) -> Result<Task<Message>, String> {
         let need = |v: &str, what: &str| if v.is_empty() { Err(format!("Enter a {what}.")) } else { Ok(()) };
         match kind {
-            PromptKind::MakeProject(dir) => Ok(load_project(dir, true)),
+            PromptKind::MakeProject(dir) => Ok(self.start_loading(dir, true)),
             PromptKind::NewFile(dir) => {
                 need(&value, "file name")?;
                 let mut name = value;
@@ -908,7 +952,7 @@ impl App {
 
     fn reopen_project(&mut self) -> Task<Message> {
         let Some(root) = self.project_root().map(Path::to_path_buf) else { return Task::none() };
-        load_project(root, false)
+        self.start_loading(root, false)
     }
 
     fn init_git(&mut self) -> Task<Message> {
@@ -1151,9 +1195,9 @@ impl App {
     pub fn project_command_enabled(&self, id: &str) -> Option<bool> {
         match id {
             "file.open_folder" => Some(true),
-            "file.recent_projects" => Some(
-                self.session.recent_projects.iter().any(|d| d.is_dir() && Some(d.as_path()) != self.project_root()),
-            ),
+            "file.recent_projects" => {
+                Some(self.session.recent_projects.iter().any(|d| Some(d.as_path()) != self.project_root()))
+            }
             "file.close_folder" | "project.new_file" | "project.new_folder" => Some(self.project.is_some()),
             id if id.starts_with("git.") => Some(self.project.as_ref().is_some_and(|p| p.git.is_some())),
             _ => None,
@@ -1162,6 +1206,9 @@ impl App {
 
     /// Hook: subscriptions while a project is open.
     pub(super) fn project_subscriptions(&self) -> Option<Subscription<Message>> {
+        if self.project_loading.as_ref().is_some_and(|l| l.shown) {
+            return Some(iced::time::every(Duration::from_millis(50)).map(|_| Message::Project(Msg::LoadingTick)));
+        }
         let p = self.project.as_ref()?;
         let editing =
             self.tabs.iter().any(|t| t.is_dirty() && t.doc.path.as_deref().is_some_and(|x| self.in_project(x)));
@@ -1228,18 +1275,20 @@ fn focus_prompt() -> Task<Message> {
 }
 
 /// Open (or with `create`, first make) a project off the UI thread.
-fn load_project(dir: PathBuf, create: bool) -> Task<Message> {
+fn load_project(id: u64, dir: PathBuf, create: bool) -> Task<Message> {
     Task::perform(
         async move {
-            tokio::task::spawn_blocking(move || -> Result<Handoff<Opened>, String> {
+            tokio::task::spawn_blocking(move || -> Result<Option<Handoff<Opened>>, String> {
                 let project = if create {
                     let p = Project::init(&dir, "").map_err(|e| e.to_string())?;
                     if !dir.join(".git").exists() {
                         init_repo(&dir, &p.config.project.default_branch)?;
                     }
                     p
-                } else {
+                } else if Project::is_project(&dir) {
                     Project::open(&dir).map_err(|e| e.to_string())?
+                } else {
+                    return Ok(None);
                 };
                 let tree = project.file_tree().map_err(|e| e.to_string())?;
                 let repo = Repo::open(&project.root).ok().map(|r| {
@@ -1250,12 +1299,20 @@ fn load_project(dir: PathBuf, create: bool) -> Task<Message> {
                         email: git.author_email.clone().filter(|s| !s.is_empty()).unwrap_or(fallback.email),
                     }
                 });
-                Ok(Handoff::new(Opened { project, tree, repo }))
+                // Watching is recursive: one watch per folder, slow on big trees.
+                let (tx, events) = mpsc::unbounded();
+                let (watcher, watch_error) = match project.watch(move |e| {
+                    let _ = tx.unbounded_send(e);
+                }) {
+                    Ok(w) => (Some(w), None),
+                    Err(e) => (None, Some(e.to_string())),
+                };
+                Ok(Some(Handoff::new(Opened { project, tree, repo, watcher, watch_error, events })))
             })
             .await
             .map_err(|e| e.to_string())?
         },
-        |r| Message::Project(Msg::Opened(r)),
+        move |r| Message::Project(Msg::Opened(id, r)),
     )
 }
 
