@@ -30,6 +30,7 @@ use crate::watch;
 
 mod assets;
 pub mod project;
+pub mod tabs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTab {
@@ -116,6 +117,7 @@ pub enum Message {
     MenuOpen(Option<usize>),
     /// Right-click menu at a window position; `None` closes it.
     ContextMenu(Option<Point>),
+    Tabs(tabs::TabMsg),
     WindowResized(Size),
     /// 150 ms after the selection last moved: show the format toolbar.
     ToolbarTick,
@@ -229,6 +231,7 @@ pub struct App {
     pub comments_visible: bool,
     pub menu_open: Option<usize>,
     pub context_menu: Option<Point>,
+    pub tab_bar: tabs::TabBar,
     pub toolbar: FormatToolbar,
     pub window_size: Size,
     window_id: Option<window::Id>,
@@ -321,6 +324,7 @@ impl App {
             next_untitled: 1,
             menu_open: None,
             context_menu: None,
+            tab_bar: tabs::TabBar::default(),
             toolbar: FormatToolbar::default(),
             window_size: Size::new(1200.0, 800.0),
             window_id: None,
@@ -579,7 +583,8 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let focus_key = |a: &Self| {
-            let menu = a.menu_open.is_some() || a.context_menu.is_some() || a.toolbar.visible;
+            let menu =
+                a.menu_open.is_some() || a.context_menu.is_some() || a.tab_bar.menu.is_some() || a.toolbar.visible;
             let dialog = a.modal_open();
             (a.active_tab().map(|t| (t.id, t.mode)), a.palette.is_some(), dialog, menu)
         };
@@ -606,6 +611,11 @@ impl App {
         // comment box just opened and wants it). A menu or the floating
         // toolbar closing leaves the find bar its keyboard.
         let after = focus_key(self);
+        let task = if before.0.map(|a| a.0) != after.0.map(|a| a.0) {
+            Task::batch([task, self.reveal_active_tab()])
+        } else {
+            task
+        };
         let task = if let Some(focus) = comment_focus {
             Task::batch([task, focus])
         } else if (before.0 != after.0 || (before != after && self.find.focus.is_none()) || jump)
@@ -641,9 +651,14 @@ impl App {
             Message::Modifiers(m) => self.find.alt = m.alt() && !m.command(),
             Message::Project(m) => return self.on_project(m),
             Message::OpenFolder(dir) => return self.open_folder(dir),
-            Message::MenuOpen(m) => self.menu_open = if self.menu_open == m { None } else { m },
+            Message::MenuOpen(m) => {
+                self.tab_bar.menu = None;
+                self.menu_open = if self.menu_open == m { None } else { m }
+            }
+            Message::Tabs(m) => return self.on_tabs(m),
             Message::ContextMenu(p) => {
                 self.menu_open = None;
+                self.tab_bar.menu = None;
                 self.context_menu = p.filter(|_| self.palette.is_none() && self.dialog.is_none());
             }
             Message::WindowResized(size) => {
@@ -750,6 +765,7 @@ impl App {
                 // A cancelled save-as also cancels the quit or close waiting on it.
                 self.quitting = false;
                 self.close_after_save.clear();
+                self.cancel_queued_closes();
             }
             Message::Saved(id, path, point, result) => return self.on_saved(id, path, point, result),
             Message::Paste(id, Some(text)) => {
@@ -974,7 +990,11 @@ impl App {
                 self.toolbar.dismissed = true;
                 return Task::none();
             }
-            if self.palette.take().is_some() || self.menu_open.take().is_some() || self.context_menu.take().is_some() {
+            if self.palette.take().is_some()
+                || self.menu_open.take().is_some()
+                || self.context_menu.take().is_some()
+                || self.tab_bar.menu.take().is_some()
+            {
                 return Task::none();
             }
             if self.dialog.is_some() {
@@ -1484,6 +1504,7 @@ impl App {
         }
         self.ensure_a_tab();
         self.save_session();
+        self.close_next_queued();
     }
 
     fn on_dialog(&mut self, choice: DialogChoice) -> Task<Message> {
@@ -1504,7 +1525,7 @@ impl App {
                 return self.continue_quit();
             }
             (Dialog::UnsavedQuit(_), DialogChoice::Discard) => return self.exit(),
-            _ => {}
+            _ => self.cancel_queued_closes(),
         }
         Task::none()
     }
