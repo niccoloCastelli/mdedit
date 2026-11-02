@@ -110,12 +110,17 @@ impl Settings {
     }
 
     /// Parse the document. Hand-numbered headings (`## 1. Goals`) keep
-    /// their own numbers and turn automatic numbering off.
+    /// their own numbers and turn automatic numbering off. A title page
+    /// for a document without a title shows the export title (the file
+    /// name) rather than nothing.
     fn doc(&mut self, markdown: &str, options: &ExportOptions) -> ast::Doc {
         let comments = if self.include_comments { options.comments.as_slice() } else { &[] };
-        let doc = ast::Doc::parse(markdown, comments);
+        let mut doc = ast::Doc::parse(markdown, comments);
         if doc.has_manual_numbers() {
             self.template.heading_numbers = false;
+        }
+        if self.template.title_page && doc.title.is_none() && !self.title.trim().is_empty() {
+            doc.title = Some(vec![ast::Inline::Text(self.title.clone())]);
         }
         doc
     }

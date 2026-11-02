@@ -123,17 +123,25 @@ impl Doc {
         doc
     }
 
+    /// The title is the first heading when every other heading is deeper.
+    /// It is usually the first block; a level-1 heading also counts after
+    /// a preamble (a note or a date line above the title), which then
+    /// follows it.
     fn extract_title(&mut self) {
-        let Some(Block::Heading { level, .. }) = self.blocks.first() else { return };
-        let level = *level;
-        let mut headings = self.blocks.iter().filter_map(|b| match b {
-            Block::Heading { level, .. } => Some(*level),
+        let Some((at, level)) = self.blocks.iter().enumerate().find_map(|(i, b)| match b {
+            Block::Heading { level, .. } => Some((i, *level)),
             _ => None,
+        }) else {
+            return;
+        };
+        if at > 0 && level != 1 {
+            return;
+        }
+        let deeper = self.blocks[at + 1..].iter().all(|b| match b {
+            Block::Heading { level: l, .. } => *l > level,
+            _ => true,
         });
-        headings.next();
-        if headings.all(|l| l > level)
-            && let Block::Heading { content, .. } = self.blocks.remove(0)
-        {
+        if deeper && let Block::Heading { content, .. } = self.blocks.remove(at) {
             self.title = Some(content);
         }
     }
@@ -621,6 +629,16 @@ mod tests {
             })
             .collect();
         assert_eq!(heads, [(1, "one"), (2, "sub"), (1, "one-1")]);
+    }
+
+    #[test]
+    fn title_after_a_preamble() {
+        let doc = Doc::parse("> A note.\n\n# Title\n\nDate.\n\n## One\n", &[]);
+        assert_eq!(doc.title, Some(vec![text("Title")]));
+        assert!(matches!(doc.blocks[0], Block::Quote(_)), "{:?}", doc.blocks[0]);
+        // Only a level-1 heading is a title after other content.
+        let doc = Doc::parse("Intro.\n\n## Part\n\n### Sub\n", &[]);
+        assert_eq!(doc.title, None);
     }
 
     #[test]
