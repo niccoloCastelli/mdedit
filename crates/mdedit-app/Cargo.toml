@@ -22,6 +22,7 @@ mdedit-git.workspace = true
 mdedit-export.workspace = true
 mdedit-editor.workspace = true
 mdedit-view.workspace = true
+mdedit-mermaid.workspace = true
 iced.workspace = true
 rfd.workspace = true
 tokio.workspace = true

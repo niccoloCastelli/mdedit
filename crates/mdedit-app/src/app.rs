@@ -109,6 +109,7 @@ pub enum Message {
     /// Run a command by id (menus, palette, keymap).
     Run(&'static str),
     Key {
+        window: window::Id,
         key: Key,
         modifiers: Modifiers,
         captured: bool,
@@ -118,10 +119,13 @@ pub enum Message {
     /// Right-click menu at a window position; `None` closes it.
     ContextMenu(Option<Point>),
     Tabs(tabs::TabMsg),
-    WindowResized(Size),
+    WindowResized(window::Id, Size),
+    /// A window's close button; the main window quits.
+    CloseRequestedFor(window::Id),
+    Diagram(window::Id, crate::diagram::DiagramMsg),
+    DiagramTick,
     /// 150 ms after the selection last moved: show the format toolbar.
     ToolbarTick,
-    WindowId(Option<window::Id>),
     Window(WindowCmd),
     Maximized(bool),
     ToolbarHeading(bool),
@@ -265,6 +269,8 @@ pub struct App {
     /// Text-input dialog of the project and git commands.
     pub prompt: Option<project::Prompt>,
     pub project_loading: Option<project::Loading>,
+    /// Open diagram editor windows (`diagram`).
+    pub diagrams: Vec<crate::diagram::Editor>,
 }
 
 #[derive(Debug, Default)]
@@ -352,6 +358,7 @@ impl App {
             project: None,
             prompt: None,
             project_loading: None,
+            diagrams: Vec::new(),
         };
         app.load_themes();
         app.apply_theme();
@@ -362,10 +369,11 @@ impl App {
             app.toast_error(w);
         }
 
+        let (main_id, open_main) = window::open(crate::main_window_settings(custom_title_bar));
+        app.window_id = Some(main_id);
         let mut tasks = vec![
             iced::system::theme().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
-            window::oldest().map(Message::WindowId),
-            iced::widget::operation::focus(EDITOR),
+            open_main.discard().chain(iced::widget::operation::focus(EDITOR)),
         ];
         let threshold = app.settings.files.large_file_threshold();
         let args: Vec<PathBuf> = std::env::args_os().skip(1).map(|a| absolute(Path::new(&a))).collect();
@@ -403,6 +411,22 @@ impl App {
             }));
         }
         (app, Task::batch(tasks))
+    }
+
+    pub fn main_window(&self) -> Option<window::Id> {
+        self.window_id
+    }
+
+    pub fn window_title(&self, window: window::Id) -> String {
+        if Some(window) == self.window_id { self.title() } else { self.diagram_title(window) }
+    }
+
+    pub fn window_theme(&self, _window: window::Id) -> iced::Theme {
+        self.iced_theme()
+    }
+
+    pub fn window_scale(&self, _window: window::Id) -> f32 {
+        self.scale_factor()
     }
 
     pub fn title(&self) -> String {
@@ -466,6 +490,7 @@ impl App {
             }
         }
         self.theme = theme;
+        self.restyle_diagrams();
     }
 
     /// Built-in themes plus `themes/*.toml` in the config dir.
@@ -524,16 +549,16 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
-            event::listen_with(|event, status, _| match event {
+            event::listen_with(|event, status, window| match event {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    Some(Message::Key { key, modifiers, captured: status == event::Status::Captured })
+                    Some(Message::Key { window, key, modifiers, captured: status == event::Status::Captured })
                 }
                 Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => Some(Message::Modifiers(m)),
                 Event::Window(window::Event::FileDropped(path)) => Some(Message::Project(project::Msg::Dropped(path))),
                 _ => None,
             }),
-            window::close_requests().map(|_| Message::CloseRequested),
-            window::resize_events().map(|(_, size)| Message::WindowResized(size)),
+            window::close_requests().map(Message::CloseRequestedFor),
+            window::resize_events().map(|(id, size)| Message::WindowResized(id, size)),
             iced::system::theme_changes().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
             watch::changes(self.watched_paths()).map(Message::FileChanged),
         ];
@@ -554,6 +579,7 @@ impl App {
             subs.push(iced::time::every(Duration::from_secs(2)).map(|_| Message::SessionTick));
         }
         subs.extend(self.export.subscription());
+        subs.extend(self.diagram_subscription());
         Subscription::batch(subs)
     }
 
@@ -602,6 +628,17 @@ impl App {
             // The document has the keyboard again.
             self.find.focus = None;
         }
+        let other_window = match &message {
+            Message::Diagram(..) | Message::DiagramTick | Message::CloseRequestedFor(_) => true,
+            Message::Key { window, .. } => Some(*window) != self.window_id,
+            _ => false,
+        };
+        if other_window {
+            // Focus operations reach every window: the document must not
+            // take the keyboard from the diagram editor's inputs.
+            let task = self.handle(message);
+            return Task::batch([task, self.refresh_derived(), self.spawn_parse_jobs(), self.find_refresh()]);
+        }
         let task = self.handle(message);
         self.align_left_table();
         let comment_focus = self.after_comments_update();
@@ -647,7 +684,23 @@ impl App {
                 self.toolbar.heading_open = false;
                 return self.run(id);
             }
-            Message::Key { key, modifiers, captured } => return self.on_key(key, modifiers, captured),
+            Message::Key { window, key, modifiers, captured } => {
+                if Some(window) != self.window_id {
+                    if captured {
+                        return Task::none();
+                    }
+                    return self.on_diagram(window, crate::diagram::DiagramMsg::Key(key, modifiers));
+                }
+                return self.on_key(key, modifiers, captured);
+            }
+            Message::Diagram(window, msg) => return self.on_diagram(window, msg),
+            Message::DiagramTick => {}
+            Message::CloseRequestedFor(window) => {
+                if Some(window) == self.window_id {
+                    return self.run_app(AppCommand::Quit);
+                }
+                return self.on_diagram(window, crate::diagram::DiagramMsg::CloseRequested);
+            }
             Message::Modifiers(m) => self.find.alt = m.alt() && !m.command(),
             Message::Project(m) => return self.on_project(m),
             Message::OpenFolder(dir) => return self.open_folder(dir),
@@ -661,13 +714,15 @@ impl App {
                 self.tab_bar.menu = None;
                 self.context_menu = p.filter(|_| self.palette.is_none() && self.dialog.is_none());
             }
-            Message::WindowResized(size) => {
+            Message::WindowResized(id, size) => {
+                if Some(id) != self.window_id {
+                    return Task::none();
+                }
                 self.window_size = size;
                 if let Some(id) = self.window_id {
                     return window::is_maximized(id).map(Message::Maximized);
                 }
             }
-            Message::WindowId(id) => self.window_id = id,
             Message::Maximized(m) => self.maximized = m,
             Message::Window(cmd) => {
                 let Some(id) = self.window_id else { return Task::none() };
@@ -1711,6 +1766,7 @@ impl App {
                 }
             }
             Action::OpenLink(url) => self.toast(format!("Link: {url}")),
+            Action::EditDiagram(range) => return self.open_diagram(id, range),
             Action::SelectionRect(_) | Action::CaretRect(_) => {}
         }
         Task::none()

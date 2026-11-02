@@ -72,6 +72,7 @@ impl App {
                 Action::Select(sel) => self.state.selection = sel,
                 Action::Scroll(y) => self.state.scroll_y = y,
                 Action::OpenLink(url) => eprintln!("open link: {url}"),
+                Action::EditDiagram(range) => eprintln!("edit diagram: {range:?}"),
                 Action::SelectionRect(_) | Action::CaretRect(_) => {}
             },
             Message::Editor(action) => match action {

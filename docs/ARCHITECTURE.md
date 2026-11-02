@@ -198,6 +198,16 @@ Built-ins handle CommonMark blocks; math and Mermaid register their own.
   block shown while an edit is re-rendering). Sources over 64 KB stay
   code. The release profile aborts on panic, so a proptest checks the
   renderer on half-typed sources.
+- Visual diagram editor (v0.3): the view's Edit button
+  (`mdedit_view::Action::EditDiagram(block range)`) opens a second window
+  (`mdedit-app/src/diagram/`; the app runs as an iced daemon for this).
+  `mdedit_mermaid::flowchart` parses flowcharts with source spans and
+  applies edits as text replacements of only the statements involved, then
+  reparses; it never serialises the whole model. Canvas positions start
+  from the renderer's layout (`node_boxes`) and are editor-only. Saving
+  replaces the code between the fences as one undo transaction. iced widget
+  focus operations reach every window, so messages from the diagram window
+  skip the main window's refocusing.
 
 ### 4.5 Renderer backend
 
