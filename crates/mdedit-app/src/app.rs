@@ -115,6 +115,8 @@ pub enum Message {
         captured: bool,
     },
     Modifiers(Modifiers),
+    /// Mouse wheel in a window, not captured by a widget (Ctrl+wheel zooms).
+    Wheel(window::Id, iced::mouse::ScrollDelta),
     MenuOpen(Option<usize>),
     /// Right-click menu at a window position; `None` closes it.
     ContextMenu(Option<Point>),
@@ -211,6 +213,11 @@ impl Default for FormatToolbar {
 }
 
 const TOOLBAR_DELAY: Duration = Duration::from_millis(150);
+/// Document zoom range (Ctrl +/-, Ctrl+wheel).
+const ZOOM_MIN: f32 = 0.5;
+const ZOOM_MAX: f32 = 3.0;
+/// Touchpad scroll distance for one Ctrl+wheel zoom step.
+const WHEEL_ZOOM_PX: f32 = 50.0;
 
 pub struct SidebarState {
     pub visible: bool,
@@ -246,6 +253,10 @@ pub struct App {
     pub dialog: Option<Dialog>,
     pub export: ExportUi,
     pub find: FindUi,
+    /// Keyboard modifiers currently held.
+    modifiers: Modifiers,
+    /// Ctrl+wheel pixel deltas (touchpads) not yet turned into a zoom step.
+    wheel_zoom_rest: f32,
     pub comments: CommentsUi,
     pub slash: SlashState,
     pub toasts: Vec<Toast>,
@@ -340,6 +351,8 @@ impl App {
             dialog: None,
             export: ExportUi::default(),
             find: FindUi::default(),
+            modifiers: Modifiers::default(),
+            wheel_zoom_rest: 0.0,
             comments: CommentsUi::default(),
             slash: SlashState::default(),
             toasts: Vec::new(),
@@ -511,10 +524,46 @@ impl App {
             tab.editor.line_numbers = e.line_numbers;
             tab.editor.monospace = e.monospace;
             tab.editor.full_width = e.full_width;
+            tab.editor.zoom = zoom;
             for v in [&mut tab.view, &mut tab.preview] {
                 v.full_width = e.full_width;
                 v.zoom = zoom;
             }
+        }
+    }
+
+    /// Change the document zoom by `steps` of 10 %, within 50-300 %.
+    fn zoom_by(&mut self, steps: i32) {
+        self.set_zoom(self.settings.appearance.zoom + 0.1 * steps as f32);
+    }
+
+    fn set_zoom(&mut self, zoom: f32) {
+        let zoom = (zoom.clamp(ZOOM_MIN, ZOOM_MAX) * 10.0).round() / 10.0;
+        if zoom == self.settings.appearance.zoom {
+            return;
+        }
+        self.settings.appearance.zoom = zoom;
+        self.apply_editor_settings();
+        self.store_settings();
+    }
+
+    /// Ctrl+wheel: one step per wheel notch; touchpad pixel deltas add up
+    /// until they reach [`WHEEL_ZOOM_PX`].
+    fn wheel_zoom(&mut self, delta: iced::mouse::ScrollDelta) {
+        let steps = match delta {
+            iced::mouse::ScrollDelta::Lines { y, .. } => {
+                self.wheel_zoom_rest = 0.0;
+                i32::from(y > 0.0) - i32::from(y < 0.0)
+            }
+            iced::mouse::ScrollDelta::Pixels { y, .. } => {
+                self.wheel_zoom_rest += y;
+                let steps = (self.wheel_zoom_rest / WHEEL_ZOOM_PX).trunc();
+                self.wheel_zoom_rest -= steps * WHEEL_ZOOM_PX;
+                steps as i32
+            }
+        };
+        if steps != 0 {
+            self.zoom_by(steps);
         }
     }
 
@@ -525,6 +574,7 @@ impl App {
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
         tab.editor.full_width = self.settings.editor.full_width;
+        tab.editor.zoom = self.settings.appearance.zoom;
         for v in [&mut tab.view, &mut tab.preview] {
             v.full_width = self.settings.editor.full_width;
             v.zoom = self.settings.appearance.zoom;
@@ -554,6 +604,9 @@ impl App {
                     Some(Message::Key { window, key, modifiers, captured: status == event::Status::Captured })
                 }
                 Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => Some(Message::Modifiers(m)),
+                Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) if status == event::Status::Ignored => {
+                    Some(Message::Wheel(window, delta))
+                }
                 Event::Window(window::Event::FileDropped(path)) => Some(Message::Project(project::Msg::Dropped(path))),
                 _ => None,
             }),
@@ -701,7 +754,18 @@ impl App {
                 }
                 return self.on_diagram(window, crate::diagram::DiagramMsg::CloseRequested);
             }
-            Message::Modifiers(m) => self.find.alt = m.alt() && !m.command(),
+            Message::Modifiers(m) => {
+                self.find.alt = m.alt() && !m.command();
+                self.modifiers = m;
+            }
+            Message::Wheel(window, delta) => {
+                if std::env::var_os("MDEDIT_DEBUG_KEYS").is_some() {
+                    eprintln!("wheel {delta:?} {:?}", self.modifiers);
+                }
+                if Some(window) == self.window_id && self.modifiers.command() {
+                    self.wheel_zoom(delta);
+                }
+            }
             Message::Project(m) => return self.on_project(m),
             Message::OpenFolder(dir) => return self.open_folder(dir),
             Message::MenuOpen(m) => {
@@ -1277,17 +1341,9 @@ impl App {
                     self.active = if cmd == NextTab { (self.active + 1) % n } else { (self.active + n - 1) % n };
                 }
             }
-            ZoomIn | ZoomOut | ZoomReset => {
-                let z = &mut self.settings.appearance.zoom;
-                *z = match cmd {
-                    ZoomIn => (*z + 0.1).min(3.0),
-                    ZoomOut => (*z - 0.1).max(0.5),
-                    _ => 1.0,
-                };
-                *z = (*z * 10.0).round() / 10.0;
-                self.apply_editor_settings();
-                self.store_settings();
-            }
+            ZoomIn => self.zoom_by(1),
+            ZoomOut => self.zoom_by(-1),
+            ZoomReset => self.set_zoom(1.0),
             ToggleFullWidth => {
                 self.settings.editor.full_width = !self.settings.editor.full_width;
                 self.apply_editor_settings();
@@ -1399,6 +1455,7 @@ impl App {
         tab.editor.line_numbers = self.settings.editor.line_numbers;
         tab.editor.monospace = self.settings.editor.monospace;
         tab.editor.full_width = self.settings.editor.full_width;
+        tab.editor.zoom = self.settings.appearance.zoom;
         for v in [&mut tab.view, &mut tab.preview] {
             v.full_width = self.settings.editor.full_width;
             v.zoom = self.settings.appearance.zoom;

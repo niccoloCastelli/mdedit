@@ -174,7 +174,7 @@ every platform and in exports.
 ### 3.2 Scale
 
 Base size 16 px, ratio about 1.25, rounded to whole pixels. The user zoom
-(Ctrl +/-) multiplies the whole scale; the UI chrome scale is separate.
+(Ctrl +/-, Ctrl+wheel; 50-300 %) multiplies the whole scale; the UI chrome scale is separate.
 
 | Token | Size / line height | Weight | Tracking | Use |
 |---|---|---|---|---|

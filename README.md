@@ -135,7 +135,7 @@ Useful environment variables:
 | `Ctrl+Shift+B`, `Ctrl+Shift+O`, `Ctrl+Shift+G` | Toggle sidebar, outline, Git panel |
 | `Ctrl+Alt+S`, `Ctrl+Alt+H` | Git checkpoint, file history |
 | `Ctrl+Shift+E` | Export as PDF |
-| `Ctrl+=`, `Ctrl+-`, `Ctrl+0` | Zoom in, out, reset |
+| `Ctrl+=`, `Ctrl+-`, `Ctrl+0`, `Ctrl`+wheel | Zoom in, out, reset; zoom with the mouse wheel |
 | `Ctrl+,` | Open the settings file |
 
 In the Mermaid editor window, `Ctrl+Enter` saves the diagram back into the
@@ -189,7 +189,7 @@ on iced; the core, project, git, sidecar and export crates are UI-free.
 
 ## Status and known gaps
 
-mdedit is in active development. The main gaps in 0.3.0:
+mdedit is in active development. The main gaps in 0.3.1:
 
 - Only Linux is built and tested. macOS and Windows have icon and bundle
   stubs but no release builds.

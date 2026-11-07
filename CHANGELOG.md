@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.1 (2026-11-07)
+
+### Features
+
+- **Ctrl+mouse wheel zooms** the document: one notch is 10 %, from 50 %
+  to 300 %, the same steps as Ctrl+= and Ctrl+-. Touchpad scrolling with
+  Ctrl held zooms too. Ctrl+0 resets. The zoom level is saved and shown in
+  the status bar when it is not 100 %. In the Mermaid editor window
+  Ctrl+wheel keeps zooming the canvas.
+
+### Fixes
+
+- **Edit mode follows the zoom:** Ctrl+= and Ctrl+- used to scale only
+  View, Read and the Split preview; the Edit source text, code and line
+  numbers now scale with them.
+
 ## v0.3.0 (2026-11-03)
 
 ### Features

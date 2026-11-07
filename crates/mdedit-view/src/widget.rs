@@ -1002,7 +1002,10 @@ impl<'a, Message> View<'a, Message> {
     ) -> bool {
         let editable = self.editable();
         match event {
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
+            // Ctrl+wheel is left uncaptured for the app's zoom.
+            Event::Mouse(mouse::Event::WheelScrolled { delta })
+                if cursor.is_over(bounds) && !st.modifiers.command() =>
+            {
                 let dy = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => -*y as f64 * 3.0 * typography::BODY.line_height as f64,
                     mouse::ScrollDelta::Pixels { y, .. } => -*y as f64,

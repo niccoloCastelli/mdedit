@@ -64,7 +64,9 @@ pub(crate) struct Colors {
 }
 
 impl Look {
-    pub fn new(theme: &Theme, monospace: bool) -> Self {
+    pub fn new(theme: &Theme, monospace: bool, zoom: f32) -> Self {
+        let zoom = if zoom > 0.0 { zoom } else { 1.0 };
+        let scaled = |s: TextStyle| TextStyle { size: s.size * zoom, line_height: s.line_height * zoom, ..s };
         let c = |t| Color::from(theme.color(t));
         let colors = Colors {
             bg: c(ColorToken::Bg),
@@ -92,12 +94,13 @@ impl Look {
         }
         (&theme.fonts.prose, &theme.fonts.mono).hash(&mut h);
         monospace.hash(&mut h);
+        zoom.to_bits().hash(&mut h);
         Self {
             prose_font: Font::with_name(intern(&theme.fonts.prose)),
             mono_font: Font::with_name(intern(&theme.fonts.mono)),
-            prose: typography::BODY,
-            code: typography::CODE,
-            number: typography::NUMBER,
+            prose: scaled(typography::BODY),
+            code: scaled(typography::CODE),
+            number: scaled(typography::NUMBER),
             monospace,
             colors,
             generation: h.finish(),
@@ -230,7 +233,7 @@ mod tests {
 
     #[test]
     fn overlapping_tokens_split_into_segments() {
-        let look = Look::new(&Theme::ember_light(), false);
+        let look = Look::new(&Theme::ember_light(), false, 1.0);
         let line = "# Title `x`";
         let tokens = vec![
             StyledRange { range: 0..11, token: SyntaxToken::Heading(1) },
@@ -247,9 +250,21 @@ mod tests {
 
     #[test]
     fn plain_line_is_one_span() {
-        let look = Look::new(&Theme::ember_dark(), true);
+        let look = Look::new(&Theme::ember_dark(), true, 1.0);
         let (spans, _) = spans("hello", &[], LineKind::Prose, &look);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].font, Some(look.mono_font));
+    }
+
+    #[test]
+    fn zoom_scales_text_and_changes_generation() {
+        let t = Theme::ember_light();
+        let base = Look::new(&t, false, 1.0);
+        assert_eq!(Look::new(&t, false, 0.0).prose.size, base.prose.size);
+        let big = Look::new(&t, false, 1.5);
+        assert_eq!(big.prose.size, base.prose.size * 1.5);
+        assert_eq!(big.code.line_height, base.code.line_height * 1.5);
+        assert_eq!(big.number.size, base.number.size * 1.5);
+        assert_ne!(big.generation, base.generation);
     }
 }

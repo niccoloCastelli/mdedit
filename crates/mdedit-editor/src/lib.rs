@@ -69,6 +69,8 @@ pub struct EditorState {
     /// Publish [`Action::CaretRect`] whenever the caret moves (the app's
     /// slash menu follows it).
     pub report_caret: bool,
+    /// Text zoom (Ctrl +/-, Ctrl+wheel); 0 or 1 means the design scale.
+    pub zoom: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]

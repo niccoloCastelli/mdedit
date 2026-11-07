@@ -51,7 +51,13 @@ impl<'a, Message> Editor<'a, Message> {
         theme: &Theme,
         on_action: impl Fn(Action) -> Message + 'a,
     ) -> Self {
-        Self { doc, state, look: Look::new(theme, state.monospace), on_action: Box::new(on_action), id: None }
+        Self {
+            doc,
+            state,
+            look: Look::new(theme, state.monospace, state.zoom),
+            on_action: Box::new(on_action),
+            id: None,
+        }
     }
 
     /// Widget id, for `iced::widget::operation::focus`.
@@ -179,6 +185,9 @@ struct State {
     queued: VecDeque<Event>,
     /// Shift is held (for shift-click).
     shift: bool,
+    /// Ctrl (Cmd on macOS) is held: the wheel zooms (the app handles it)
+    /// instead of scrolling.
+    command: bool,
     /// The last `SelectionRect` published.
     sel_rect: Option<Rectangle>,
     /// The last `CaretRect` published.
@@ -215,6 +224,7 @@ impl Default for State {
             local_selection: None,
             queued: VecDeque::new(),
             shift: false,
+            command: false,
             sel_rect: None,
             caret_pub: None,
             keystroke_started: Cell::new(None),
@@ -984,7 +994,7 @@ impl<Message> Editor<'_, Message> {
                 }
                 true
             }
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) && !st.command => {
                 let lh = self.look.metrics(LineKind::Prose).line_height as f64;
                 let dy = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => -*y as f64 * 3.0 * lh,
@@ -1026,6 +1036,7 @@ impl<Message> Editor<'_, Message> {
             }
             Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
                 st.shift = m.shift();
+                st.command = m.command();
                 false
             }
             Event::InputMethod(ime) => {
@@ -1377,7 +1388,7 @@ mod tests {
     }
 
     fn laid_out(doc: &Document, state: &EditorState) -> State {
-        let look = Look::new(&Theme::ember_light(), state.monospace);
+        let look = Look::new(&Theme::ember_light(), state.monospace, 1.0);
         let geom = Geom::compute(Size::new(1000.0, 800.0), state, &look, motion::line_count(doc.buffer()));
         let mut st = State { geom, ..State::default() };
         st.sync(doc, &look);
@@ -1399,7 +1410,7 @@ mod tests {
     #[test]
     fn scroll_anchor_survives_measurement() {
         let doc = doc_of(5_000, false);
-        let look = Look::new(&Theme::ember_light(), false);
+        let look = Look::new(&Theme::ember_light(), false, 1.0);
         let mut st = laid_out(&doc, &EditorState::default());
         st.set_scroll(100_000.0);
         st.prepare(&doc, &look);
@@ -1419,7 +1430,7 @@ mod tests {
     #[test]
     fn top_anchor_round_trips_through_scroll_to_byte() {
         let doc = doc_of(5_000, false);
-        let look = Look::new(&Theme::ember_light(), false);
+        let look = Look::new(&Theme::ember_light(), false, 1.0);
         let buf = doc.buffer();
         let mut st = laid_out(&doc, &EditorState::default());
         assert_eq!(st.top_anchor(buf), (0, 0.0));
@@ -1442,7 +1453,7 @@ mod tests {
     #[test]
     fn edits_patch_the_height_map() {
         let mut doc = doc_of(3_000, true);
-        let look = Look::new(&Theme::ember_light(), false);
+        let look = Look::new(&Theme::ember_light(), false, 1.0);
         let mut st = laid_out(&doc, &EditorState::default());
         let at = doc.buffer().line_to_byte(1500);
         doc.apply(&Edit::insert(at, "a\nb\nc\n", EditOrigin::User, TxnId(0)));
@@ -1461,7 +1472,7 @@ mod tests {
     fn bench_typing_10mb() {
         for parse in [false, true] {
             let mut doc = doc_of(65_000, parse);
-            let look = Look::new(&Theme::ember_light(), false);
+            let look = Look::new(&Theme::ember_light(), false, 1.0);
             let state = EditorState::default();
             let mut st = laid_out(&doc, &state);
             let mut pos = doc.buffer().line_to_byte(30_000) + 10;
