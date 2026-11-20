@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Stub for the M5 macOS bundle: mdedit.app/Contents/Info.plist, with
-     assets/icons/mdedit.icns and mdedit-file-md.icns copied to
-     Contents/Resources/. Version strings are filled in at bundle time. -->
+<!-- mdedit.app/Contents/Info.plist. scripts/macos-bundle.sh (`make app`)
+     fills in @VERSION@ and copies assets/icons/mdedit.icns and
+     mdedit-file-md.icns to Contents/Resources/. -->
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
@@ -16,11 +16,17 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>@VERSION@</string>
   <key>CFBundleVersion</key>
-  <string>0.1.0</string>
+  <string>@VERSION@</string>
   <key>CFBundleIconFile</key>
   <string>mdedit</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.productivity</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>CFBundleDocumentTypes</key>
@@ -43,6 +49,33 @@
       <array>
         <string>net.daringfireball.markdown</string>
       </array>
+    </dict>
+  </array>
+  <!-- Declares the Markdown type in case no other installed app does, so
+       .md and .markdown files resolve to it and can open in mdedit. -->
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>net.daringfireball.markdown</string>
+      <key>UTTypeDescription</key>
+      <string>Markdown document</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.plain-text</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>md</string>
+          <string>markdown</string>
+        </array>
+        <key>public.mime-type</key>
+        <array>
+          <string>text/markdown</string>
+        </array>
+      </dict>
     </dict>
   </array>
 </dict>

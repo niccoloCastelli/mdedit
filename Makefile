@@ -1,9 +1,10 @@
-# Release helpers. `make deb` needs cargo-deb (`cargo install cargo-deb`).
+# Release helpers. `make deb` needs cargo-deb (`cargo install cargo-deb`);
+# `make app` and `make dmg` run on macOS only.
 
 CARGO ?= cargo
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 
-.PHONY: all build release check fmt clippy test deb clean
+.PHONY: all build release check fmt clippy test deb app dmg clean
 
 all: build
 
@@ -30,6 +31,14 @@ deb:
 	@command -v cargo-deb >/dev/null || { echo "cargo-deb missing: cargo install cargo-deb" >&2; exit 1; }
 	$(CARGO) deb -p mdedit-app
 	@ls -1 target/debian/mdedit_$(VERSION)-*.deb
+
+# macOS: target/macos/mdedit.app, ad-hoc signed (scripts/macos-bundle.sh).
+app:
+	CARGO=$(CARGO) sh scripts/macos-bundle.sh
+
+# macOS: the app above plus target/macos/mdedit-<version>.dmg.
+dmg:
+	CARGO=$(CARGO) sh scripts/macos-bundle.sh --dmg
 
 clean:
 	$(CARGO) clean

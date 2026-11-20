@@ -389,7 +389,11 @@ impl App {
             open_main.discard().chain(iced::widget::operation::focus(EDITOR)),
         ];
         let threshold = app.settings.files.large_file_threshold();
-        let args: Vec<PathBuf> = std::env::args_os().skip(1).map(|a| absolute(Path::new(&a))).collect();
+        #[allow(unused_mut)]
+        let mut args: Vec<PathBuf> = std::env::args_os().skip(1).map(|a| absolute(Path::new(&a))).collect();
+        // Finder sends the files as an Apple Event, not as arguments.
+        #[cfg(target_os = "macos")]
+        args.extend(crate::macos_open::take_pending());
         // Files opened from outside the last project (file manager, command
         // line) open on their own: the project and its tabs stay closed.
         if let Some(dir) = app.session.project.clone()
@@ -615,6 +619,8 @@ impl App {
             iced::system::theme_changes().map(|m| Message::SystemDark(m == iced::theme::Mode::Dark)),
             watch::changes(self.watched_paths()).map(Message::FileChanged),
         ];
+        #[cfg(target_os = "macos")]
+        subs.push(crate::macos_open::subscription().map(Message::OpenPicked));
         subs.extend(self.project_subscriptions());
         let stats_stale = self
             .active_tab()

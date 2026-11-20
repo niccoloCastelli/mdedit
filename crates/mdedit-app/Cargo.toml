@@ -35,6 +35,10 @@ jiff.workspace = true
 similar.workspace = true
 arboard.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+
 [build-dependencies]
 winresource.workspace = true
 

@@ -35,6 +35,9 @@ rfd = "0.17"
 # Embeds the app icon in the Windows exe (mdedit-app build.rs, Windows targets only).
 winresource = { version = "0.1", default-features = false }
 tokio = { version = "1", features = ["fs", "rt", "sync", "time"] }
+# macOS only: receive "open documents" Apple Events from Finder.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSAppleEventDescriptor", "NSAppleEventManager", "NSNotification", "NSString", "NSURL", "objc2-core-services"] }
 
 # Core
 # Default features off: line breaks are LF, CRLF and CR only (what

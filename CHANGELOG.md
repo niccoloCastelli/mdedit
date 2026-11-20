@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- **macOS app bundle:** `make app` builds an ad-hoc signed
+  `target/macos/mdedit.app` and `make dmg` a disk image
+  (`scripts/macos-bundle.sh`). The bundle declares `.md` and `.markdown`
+  files, so mdedit can be chosen as their default app in Finder.
+
+### Fixes
+
+- **Opening files from Finder on macOS:** LaunchServices sends documents
+  as an `odoc` Apple Event rather than as arguments, so double-clicking a
+  Markdown file used to open an empty window. mdedit now handles the event,
+  both at launch and while running (new tab in the open window).
+
 ## v0.3.1 (2026-11-07)
 
 ### Features
