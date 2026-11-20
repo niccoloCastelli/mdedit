@@ -8,6 +8,8 @@ mod diagram;
 mod export_ui;
 mod find;
 mod keymap;
+#[cfg(target_os = "macos")]
+mod macos_open;
 mod palette;
 mod separator;
 mod session;
@@ -24,6 +26,8 @@ use app::App;
 fn main() -> iced::Result {
     trace::start();
     prefer_vulkan();
+    #[cfg(target_os = "macos")]
+    macos_open::install();
     let ui_font = style::font(&mdedit_theme::Fonts::default().ui);
     // A daemon, so diagram editors can open their own windows; App::new
     // opens the main one.

@@ -89,6 +89,7 @@ The `Makefile` wraps the usual tasks:
 | `make release` | Release build (`target/release/mdedit`) |
 | `make check` | The merge gate: `fmt`, `clippy -D warnings` and `test --workspace` |
 | `make deb` | Release build plus `target/debian/mdedit_<version>-1_<arch>.deb` (needs `cargo install cargo-deb`) |
+| `make app` / `make dmg` | macOS: `target/macos/mdedit.app` (ad-hoc signed) and a `.dmg` |
 | `make clean` | `cargo clean` |
 
 The `.deb` installs the binary, a desktop entry, the app and Markdown file
@@ -191,8 +192,9 @@ on iced; the core, project, git, sidecar and export crates are UI-free.
 
 mdedit is in active development. The main gaps in 0.3.1:
 
-- Only Linux is built and tested. macOS and Windows have icon and bundle
-  stubs but no release builds.
+- Linux is the main platform. macOS builds and runs from source
+  (`make app`), but there are no signed release builds yet; Windows has
+  icon stubs only.
 - Math (`$...$`, `$$...$$`) is not rendered yet; it shows as code.
 - Git has no branch merge or conflict resolution, pull is fast-forward
   only, and push needs a `push` feature build.
